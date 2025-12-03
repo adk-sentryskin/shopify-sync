@@ -64,9 +64,9 @@ shopify-sync/
 
 3. **Edit .env file** with your Shopify credentials:
    ```env
+   DB_DSN=postgresql://shopify:shopify123@localhost:5432/shopify_sync?options=-c%20search_path=shopify_sync
    SHOPIFY_API_KEY=your_shopify_api_key
    SHOPIFY_API_SECRET=your_shopify_api_secret
-   APP_SECRET_KEY=your_random_secret_key
    OAUTH_REDIRECT_URL=http://localhost:8000/api/oauth/callback
    ```
 
@@ -117,10 +117,9 @@ shopify-sync/
 
    Edit with your configuration:
    ```env
-   DATABASE_URL=postgresql://shopify:shopify123@localhost:5432/shopify_sync
+   DB_DSN=postgresql://shopify:shopify123@localhost:5432/shopify_sync?options=-c%20search_path=shopify_sync
    SHOPIFY_API_KEY=your_shopify_api_key
    SHOPIFY_API_SECRET=your_shopify_api_secret
-   APP_SECRET_KEY=your_random_secret_key
    OAUTH_REDIRECT_URL=http://localhost:8000/api/oauth/callback
    ```
 
@@ -236,17 +235,17 @@ curl "http://localhost:8000/api/shopify/custom?endpoint=/products/count.json&met
 
 ## Environment Variables
 
-| Variable              | Description                           | Required |
-|-----------------------|---------------------------------------|----------|
-| DATABASE_URL          | PostgreSQL connection string          | Yes      |
-| SHOPIFY_API_KEY       | Shopify App API Key                   | Yes      |
-| SHOPIFY_API_SECRET    | Shopify App API Secret                | Yes      |
-| SHOPIFY_API_VERSION   | Shopify API version (e.g., 2024-01)   | No       |
-| SHOPIFY_SCOPES        | OAuth scopes (comma-separated)        | No       |
-| APP_HOST              | Application host                      | No       |
-| APP_PORT              | Application port                      | No       |
-| APP_SECRET_KEY        | Secret key for encryption             | Yes      |
-| OAUTH_REDIRECT_URL    | OAuth callback URL                    | Yes      |
+| Variable              | Description                                      | Required | Default     |
+|-----------------------|--------------------------------------------------|----------|-------------|
+| DB_DSN                | PostgreSQL DSN with schema search path           | Yes      | -           |
+| SHOPIFY_API_KEY       | Shopify App API Key                              | Yes      | -           |
+| SHOPIFY_API_SECRET    | Shopify App API Secret                           | Yes      | -           |
+| SHOPIFY_API_VERSION   | Shopify API version (e.g., 2024-01)              | No       | 2024-01     |
+| SHOPIFY_SCOPES        | OAuth scopes (comma-separated)                   | No       | read_products,read_orders,read_customers |
+| APP_HOST              | Application host (optional)                      | No       | 0.0.0.0     |
+| APP_PORT              | Application port (optional)                      | No       | 8000        |
+| APP_SECRET_KEY        | Secret key for encryption (optional)             | No       | None        |
+| OAUTH_REDIRECT_URL    | OAuth callback URL                               | Yes      | -           |
 
 ## Development
 
@@ -285,13 +284,14 @@ flake8 app/
 
 ## Security Considerations
 
-- Store `SHOPIFY_API_SECRET` and `APP_SECRET_KEY` securely
+- Store `SHOPIFY_API_SECRET` securely (use environment variables or secrets management)
 - Use HTTPS in production
 - Implement rate limiting
 - Add request validation and sanitization
 - Consider encrypting access tokens at rest
 - Implement token rotation
 - Add logging and monitoring
+- If using `APP_SECRET_KEY`, ensure it's strong and kept secret
 
 ## API Documentation
 
