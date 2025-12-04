@@ -3,6 +3,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.database import engine, Base
 from app.routers import oauth, shopify_data
 from app.config import settings
+from sqlalchemy import text
+
+# Create schema if it doesn't exist
+with engine.connect() as conn:
+    conn.execute(text("CREATE SCHEMA IF NOT EXISTS shopify_sync"))
+    conn.commit()
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
