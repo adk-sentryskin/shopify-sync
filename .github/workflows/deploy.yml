@@ -120,22 +120,12 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Clear all environment variables
+      - name: Clear problematic env vars
         run: |
-          # Get all existing env var keys
-          ENV_VARS=$(gcloud run services describe ${{ env.SERVICE_NAME }}-staging \
+          gcloud run services update ${{ env.SERVICE_NAME }}-staging \
             --region=${{ env.REGION }} \
-            --format='value[separator=","](spec.template.spec.containers[0].env[].name)' 2>/dev/null || echo "")
-
-          if [ -n "$ENV_VARS" ]; then
-            echo "Clearing existing env vars: $ENV_VARS"
-            gcloud run services update ${{ env.SERVICE_NAME }}-staging \
-              --region=${{ env.REGION }} \
-              --clear-env-vars \
-              --quiet
-          else
-            echo "No existing service or env vars to clear"
-          fi
+            --clear-env-vars DB_DSN \
+            --quiet || echo "Service may not exist yet"
 
       - name: Deploy to Cloud Run (Staging)
         uses: google-github-actions/deploy-cloudrun@v2
@@ -151,7 +141,12 @@ jobs:
             --max-instances=10
             --timeout=300
             --allow-unauthenticated
-            --set-env-vars=ENVIRONMENT=staging,DEBUG=false,LOG_LEVEL=INFO,DB_DSN=postgresql://user_dev:iol%40j39Rs1kp%24LY%3F@34.45.186.110:5432/chekoutai?options=-c%20search_path=shopify_sync,SHOPIFY_API_KEY=xxxx,SHOPIFY_API_SECRET=yyy
+          env_vars: |
+            ENVIRONMENT=staging
+            DEBUG=false
+            LOG_LEVEL=INFO
+            SHOPIFY_API_KEY=xxxx
+            SHOPIFY_API_SECRET=yyy
       - name: Verify deployment
         run: |
           SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }}-staging \
