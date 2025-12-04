@@ -1,7 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.database import engine, Base
 from app.routers import oauth, shopify_data
 from app.config import settings
+
+# Create database tables
+Base.metadata.create_all(bind=engine)
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -11,18 +15,6 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc"
 )
-
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize database tables on startup (non-blocking)"""
-    try:
-        from app.database import engine, Base
-        Base.metadata.create_all(bind=engine)
-        print("✅ Database tables created successfully")
-    except Exception as e:
-        print(f"⚠️ Database initialization skipped: {str(e)}")
-        print("App will still start - database will be initialized on first use")
 
 # CORS configuration
 app.add_middleware(
