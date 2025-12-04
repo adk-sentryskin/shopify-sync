@@ -134,21 +134,13 @@ jobs:
             --max-instances=10
             --timeout=300
             --allow-unauthenticated
-          # Environment variables - non-sensitive configuration
-          # NOTE: You can move sensitive values here for testing/development
-          # Secrets take precedence if both are defined
           env_vars: |
             ENVIRONMENT=staging
             DEBUG=false
             LOG_LEVEL=INFO
-          # Secrets from Google Cloud Secret Manager
-          # NOTE: If a secret doesn't exist, you can provide the value in env_vars instead
-          # Format: ENV_VAR_NAME=secret-name:version
-          secrets: |
-            DB_DSN=shopify-sync-db-dsn-staging:latest
-            SHOPIFY_API_KEY=shopify-api-key-staging:latest
-            SHOPIFY_API_SECRET=shopify-api-secret-staging:latest
-
+            DB_DSN=postgresql://user_dev:iol%40j39Rs1kp%24LY%3F@34.45.186.110:5432/chekoutai
+            SHOPIFY_API_KEY=xxxx
+            SHOPIFY_API_SECRET=yyy
       - name: Verify deployment
         run: |
           SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }}-staging \
