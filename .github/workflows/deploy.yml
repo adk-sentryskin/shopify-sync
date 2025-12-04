@@ -120,13 +120,6 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Clear problematic env vars
-        run: |
-          gcloud run services update ${{ env.SERVICE_NAME }}-staging \
-            --region=${{ env.REGION }} \
-            --clear-env-vars DB_DSN \
-            --quiet || echo "Service may not exist yet"
-
       - name: Deploy to Cloud Run (Staging)
         uses: google-github-actions/deploy-cloudrun@v2
         with:
@@ -141,13 +134,7 @@ jobs:
             --max-instances=10
             --timeout=300
             --allow-unauthenticated
-          env_vars: |
-            ENVIRONMENT=staging
-            DEBUG=false
-            LOG_LEVEL=INFO
-            DB_DSN=postgresql://user_dev:iol%40j39Rs1kp%24LY%3F@34.45.186.110:5432/chekoutai?options=-c%20search_path=shopify_sync
-            SHOPIFY_API_KEY=xxxx
-            SHOPIFY_API_SECRET=yyy
+            --set-env-vars=ENVIRONMENT=staging,DEBUG=false,LOG_LEVEL=INFO,DB_DSN=postgresql://user_dev:iol%40j39Rs1kp%24LY%3F@34.45.186.110:5432/chekoutai?options=-c%20search_path=shopify_sync,SHOPIFY_API_KEY=xxxx,SHOPIFY_API_SECRET=yyy
       - name: Verify deployment
         run: |
           SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }}-staging \
