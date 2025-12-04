@@ -120,17 +120,17 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Clear all environment variables
+      - name: Delete existing service if it has secret references
         run: |
           echo "Checking if service exists..."
           if gcloud run services describe ${{ env.SERVICE_NAME }}-staging --region=${{ env.REGION }} &> /dev/null; then
-            echo "Service exists. Clearing all environment variables..."
-            gcloud run services update ${{ env.SERVICE_NAME }}-staging \
+            echo "Service exists. Deleting it to allow fresh deployment..."
+            gcloud run services delete ${{ env.SERVICE_NAME }}-staging \
               --region=${{ env.REGION }} \
-              --clear-env-vars
-            echo "Environment variables cleared successfully!"
+              --quiet
+            echo "Service deleted successfully!"
           else
-            echo "Service does not exist yet, skipping clear step"
+            echo "Service does not exist yet, proceeding with deployment"
           fi
 
       - name: Deploy to Cloud Run (Staging)
