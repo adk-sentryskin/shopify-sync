@@ -147,7 +147,7 @@ jobs:
             --max-instances=10
             --timeout=300
             --allow-unauthenticated
-            --set-env-vars=ENVIRONMENT=staging,DEBUG=false,LOG_LEVEL=INFO,DB_DSN=postgresql://user_dev:iol%40j39Rs1kp%24LY%3F@34.45.186.110:5432/chekoutai?options=-c%20search_path=shopify_sync,SHOPIFY_API_KEY=xxxx,SHOPIFY_API_SECRET=yyy
+            --set-env-vars=ENVIRONMENT=staging,DEBUG=false,LOG_LEVEL=INFO,DB_DSN=postgresql://user_dev:iol%40j39Rs1kp%24LY%3F@34.45.186.110:5432/chekoutai?options=-c%20search_path=shopify_sync,SHOPIFY_API_KEY=${{ secrets.SHOPIFY_API_KEY }},SHOPIFY_API_SECRET=${{ secrets.SHOPIFY_API_SECRET }}
       - name: Verify deployment
         run: |
           SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }}-staging \
