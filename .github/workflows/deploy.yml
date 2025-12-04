@@ -120,6 +120,23 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
+      - name: Clear all environment variables
+        run: |
+          # Get all existing env var keys
+          ENV_VARS=$(gcloud run services describe ${{ env.SERVICE_NAME }}-staging \
+            --region=${{ env.REGION }} \
+            --format='value[separator=","](spec.template.spec.containers[0].env[].name)' 2>/dev/null || echo "")
+
+          if [ -n "$ENV_VARS" ]; then
+            echo "Clearing existing env vars: $ENV_VARS"
+            gcloud run services update ${{ env.SERVICE_NAME }}-staging \
+              --region=${{ env.REGION }} \
+              --clear-env-vars \
+              --quiet
+          else
+            echo "No existing service or env vars to clear"
+          fi
+
       - name: Deploy to Cloud Run (Staging)
         uses: google-github-actions/deploy-cloudrun@v2
         with:
