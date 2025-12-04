@@ -145,8 +145,6 @@ jobs:
             ENVIRONMENT=staging
             DEBUG=false
             LOG_LEVEL=INFO
-            SHOPIFY_API_KEY=xxxx
-            SHOPIFY_API_SECRET=yyy
       - name: Verify deployment
         run: |
           SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }}-staging \
