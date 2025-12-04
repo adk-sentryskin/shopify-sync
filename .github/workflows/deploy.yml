@@ -122,10 +122,16 @@ jobs:
 
       - name: Clear all environment variables
         run: |
-          gcloud run services update ${{ env.SERVICE_NAME }}-staging \
-            --region=${{ env.REGION }} \
-            --clear-env-vars \
-            --quiet || echo "Service may not exist yet"
+          echo "Checking if service exists..."
+          if gcloud run services describe ${{ env.SERVICE_NAME }}-staging --region=${{ env.REGION }} &> /dev/null; then
+            echo "Service exists. Clearing all environment variables..."
+            gcloud run services update ${{ env.SERVICE_NAME }}-staging \
+              --region=${{ env.REGION }} \
+              --clear-env-vars
+            echo "Environment variables cleared successfully!"
+          else
+            echo "Service does not exist yet, skipping clear step"
+          fi
 
       - name: Deploy to Cloud Run (Staging)
         uses: google-github-actions/deploy-cloudrun@v2
@@ -141,13 +147,7 @@ jobs:
             --max-instances=10
             --timeout=300
             --allow-unauthenticated
-          env_vars: |
-            ENVIRONMENT=staging
-            DEBUG=false
-            LOG_LEVEL=INFO
-            DB_DSN=postgresql://user_dev:iol%40j39Rs1kp%24LY%3F@34.45.186.110:5432/chekoutai?options=-c%20search_path=shopify_sync
-            SHOPIFY_API_KEY=xxxx
-            SHOPIFY_API_SECRET=yyy
+            --set-env-vars=ENVIRONMENT=staging,DEBUG=false,LOG_LEVEL=INFO,DB_DSN=postgresql://user_dev:iol%40j39Rs1kp%24LY%3F@34.45.186.110:5432/chekoutai?options=-c%20search_path=shopify_sync,SHOPIFY_API_KEY=xxxx,SHOPIFY_API_SECRET=yyy
       - name: Verify deployment
         run: |
           SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }}-staging \
