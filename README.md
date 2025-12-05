@@ -53,16 +53,19 @@ shopify-sync/
 ### Option 1: Using Docker (Recommended)
 
 1. **Clone the repository**
+
    ```bash
    cd shopify-sync
    ```
 
 2. **Create environment file**
+
    ```bash
    cp .env.example .env
    ```
 
 3. **Edit .env file** with your Shopify credentials:
+
    ```env
    DB_DSN=postgresql://shopify:shopify123@localhost:5432/shopify_sync?options=-c%20search_path=shopify_sync
    SHOPIFY_API_KEY=your_shopify_api_key
@@ -71,11 +74,13 @@ shopify-sync/
    ```
 
 4. **Start the services**
+
    ```bash
    docker-compose up -d
    ```
 
 5. **Check logs**
+
    ```bash
    docker-compose logs -f app
    ```
@@ -88,22 +93,26 @@ shopify-sync/
 ### Option 2: Local Development
 
 1. **Prerequisites**
+
    - Python 3.11+
    - PostgreSQL 15+
    - pip
 
 2. **Create virtual environment**
+
    ```bash
    python -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
 
 3. **Install dependencies**
+
    ```bash
    pip install -r requirements.txt
    ```
 
 4. **Setup PostgreSQL database**
+
    ```sql
    CREATE DATABASE shopify_sync;
    CREATE USER shopify WITH PASSWORD 'shopify123';
@@ -111,11 +120,13 @@ shopify-sync/
    ```
 
 5. **Create .env file**
+
    ```bash
    cp .env.example .env
    ```
 
    Edit with your configuration:
+
    ```env
    DB_DSN=postgresql://shopify:shopify123@localhost:5432/shopify_sync?options=-c%20search_path=shopify_sync
    SHOPIFY_API_KEY=your_shopify_api_key
@@ -124,16 +135,19 @@ shopify-sync/
    ```
 
 6. **Initialize database**
+
    ```bash
    python setup_database.py
    ```
 
 7. **Run the application**
+
    ```bash
    python run.py
    ```
 
    Or with uvicorn directly:
+
    ```bash
    uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
    ```
@@ -154,6 +168,7 @@ curl -X POST "http://localhost:8000/api/oauth/initiate" \
 ```
 
 Response:
+
 ```json
 {
   "authorization_url": "https://mystore.myshopify.com/admin/oauth/authorize?...",
@@ -179,30 +194,35 @@ curl "http://localhost:8000/api/oauth/status?merchant_id=merchant_001"
 All data endpoints require the `X-Merchant-Id` header:
 
 #### Get Products
+
 ```bash
 curl "http://localhost:8000/api/shopify/products?limit=10" \
   -H "X-Merchant-Id: merchant_001"
 ```
 
 #### Get Orders
+
 ```bash
 curl "http://localhost:8000/api/shopify/orders?limit=10&status=any" \
   -H "X-Merchant-Id: merchant_001"
 ```
 
 #### Get Customers
+
 ```bash
 curl "http://localhost:8000/api/shopify/customers?limit=10" \
   -H "X-Merchant-Id: merchant_001"
 ```
 
 #### Get Shop Info
+
 ```bash
 curl "http://localhost:8000/api/shopify/shop" \
   -H "X-Merchant-Id: merchant_001"
 ```
 
 #### Custom Endpoint
+
 ```bash
 curl "http://localhost:8000/api/shopify/custom?endpoint=/products/count.json&method=GET" \
   -H "X-Merchant-Id: merchant_001"
@@ -212,16 +232,16 @@ curl "http://localhost:8000/api/shopify/custom?endpoint=/products/count.json&met
 
 ### merchants table
 
-| Column       | Type      | Description                          |
-|--------------|-----------|--------------------------------------|
-| id           | Integer   | Primary key                          |
-| merchant_id  | String    | Unique merchant identifier           |
-| shop_domain  | String    | Shopify shop domain                  |
-| access_token | Text      | OAuth access token (encrypted)       |
-| scope        | String    | OAuth scopes granted                 |
-| is_active    | Integer   | Active status (1=active, 0=inactive) |
-| created_at   | DateTime  | Creation timestamp                   |
-| updated_at   | DateTime  | Last update timestamp                |
+| Column       | Type     | Description                          |
+| ------------ | -------- | ------------------------------------ |
+| id           | Integer  | Primary key                          |
+| merchant_id  | String   | Unique merchant identifier           |
+| shop_domain  | String   | Shopify shop domain                  |
+| access_token | Text     | OAuth access token (encrypted)       |
+| scope        | String   | OAuth scopes granted                 |
+| is_active    | Integer  | Active status (1=active, 0=inactive) |
+| created_at   | DateTime | Creation timestamp                   |
+| updated_at   | DateTime | Last update timestamp                |
 
 ## Authentication Flow
 
@@ -235,31 +255,33 @@ curl "http://localhost:8000/api/shopify/custom?endpoint=/products/count.json&met
 
 ## Environment Variables
 
-| Variable              | Description                                      | Required | Default     |
-|-----------------------|--------------------------------------------------|----------|-------------|
-| DB_DSN                | PostgreSQL DSN with schema search path           | Yes      | -           |
-| SHOPIFY_API_KEY       | Shopify App API Key                              | Yes      | -           |
-| SHOPIFY_API_SECRET    | Shopify App API Secret                           | Yes      | -           |
-| SHOPIFY_API_VERSION   | Shopify API version (e.g., 2024-01)              | No       | 2024-01     |
-| SHOPIFY_SCOPES        | OAuth scopes (comma-separated)                   | No       | read_products,read_orders,read_customers |
-| APP_HOST              | Application host (optional)                      | No       | 0.0.0.0     |
-| APP_PORT              | Application port (optional)                      | No       | 8000        |
-| APP_SECRET_KEY        | Secret key for encryption (optional)             | No       | None        |
-| OAUTH_REDIRECT_URL    | OAuth callback URL                               | Yes      | -           |
+| Variable            | Description                            | Required | Default                                  |
+| ------------------- | -------------------------------------- | -------- | ---------------------------------------- |
+| DB_DSN              | PostgreSQL DSN with schema search path | Yes      | -                                        |
+| SHOPIFY_API_KEY     | Shopify App API Key                    | Yes      | -                                        |
+| SHOPIFY_API_SECRET  | Shopify App API Secret                 | Yes      | -                                        |
+| SHOPIFY_API_VERSION | Shopify API version (e.g., 2024-01)    | No       | 2024-01                                  |
+| SHOPIFY_SCOPES      | OAuth scopes (comma-separated)         | No       | read_products,read_orders,read_customers |
+| APP_HOST            | Application host (optional)            | No       | 0.0.0.0                                  |
+| APP_PORT            | Application port (optional)            | No       | 8000                                     |
+| OAUTH_REDIRECT_URL  | OAuth callback URL                     | Yes      | -                                        |
 
 ## Development
 
 ### Running Tests
+
 ```bash
 pytest
 ```
 
 ### Code Formatting
+
 ```bash
 black app/
 ```
 
 ### Linting
+
 ```bash
 flake8 app/
 ```
@@ -269,6 +291,7 @@ flake8 app/
 ### Docker Deployment
 
 1. Build and push image:
+
    ```bash
    docker build -t shopify-sync:latest .
    docker tag shopify-sync:latest your-registry/shopify-sync:latest
@@ -291,17 +314,18 @@ flake8 app/
 - Consider encrypting access tokens at rest
 - Implement token rotation
 - Add logging and monitoring
-- If using `APP_SECRET_KEY`, ensure it's strong and kept secret
 
 ## API Documentation
 
 Once running, visit:
+
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
 
 ## Troubleshooting
 
 ### Database Connection Issues
+
 ```bash
 # Check if PostgreSQL is running
 docker-compose ps
@@ -311,11 +335,13 @@ docker-compose logs db
 ```
 
 ### OAuth Issues
+
 - Verify your Shopify App credentials
 - Ensure redirect URL matches Shopify App settings
 - Check that shop domain is correct (include .myshopify.com)
 
 ### Application Logs
+
 ```bash
 docker-compose logs -f app
 ```

@@ -27,7 +27,6 @@ class Settings(BaseSettings):
     # Application (optional - have sensible defaults)
     APP_HOST: str = "0.0.0.0"
     APP_PORT: int = 8000
-    APP_SECRET_KEY: Optional[str] = None
 
     # Environment configuration
     ENVIRONMENT: str = "development"
@@ -36,6 +35,10 @@ class Settings(BaseSettings):
 
     # OAuth
     OAUTH_REDIRECT_URL: str
+
+    # Security - Token Encryption
+    # Generate key using: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    ENCRYPTION_KEY: str
 
     model_config = SettingsConfigDict(
         env_file=".env",

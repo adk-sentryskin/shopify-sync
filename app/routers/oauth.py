@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from typing import Dict
+from datetime import datetime, timezone
 from app.database import get_db
 from app.models import Merchant
 from app.schemas import OAuthInitiate, MerchantResponse
@@ -59,10 +60,10 @@ async def initiate_oauth(
 
 @router.get("/callback")
 async def oauth_callback(
+    request: Request,
     code: str = Query(..., description="Authorization code from Shopify"),
     shop: str = Query(..., description="Shop domain"),
     state: str = Query(None, description="State parameter (merchant_id)"),
-    hmac: str = Query(None, description="HMAC signature"),
     db: Session = Depends(get_db)
 ):
     """
@@ -73,15 +74,31 @@ async def oauth_callback(
         - shop: Shop domain
         - state: Merchant ID (passed as state)
         - hmac: HMAC signature for verification
+        - host: Host parameter from Shopify
+        - timestamp: Timestamp parameter from Shopify
     """
-    # Verify HMAC
-    params = {
-        "code": code,
-        "shop": shop,
-        "hmac": hmac
-    }
-    if state:
-        params["state"] = state
+    # Get ALL query parameters for HMAC verification
+    # Shopify includes all params (code, shop, state, timestamp, host) in HMAC calculation
+    params = dict(request.query_params)
+
+    # Validate timestamp to prevent replay attacks (Shopify recommends < 5 minutes)
+    if "timestamp" in params:
+        try:
+            callback_timestamp = int(params["timestamp"])
+            current_timestamp = int(datetime.now(timezone.utc).timestamp())
+            time_difference = abs(current_timestamp - callback_timestamp)
+
+            # Reject if older than 5 minutes (300 seconds)
+            if time_difference > 300:
+                raise HTTPException(
+                    status_code=400,
+                    detail="OAuth callback timestamp expired"
+                )
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid timestamp format"
+            )
 
     if not shopify_oauth.verify_hmac(params):
         raise HTTPException(
