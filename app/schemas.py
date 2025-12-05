@@ -30,3 +30,33 @@ class OAuthCallback(BaseModel):
     code: str
     shop: str
     state: Optional[str] = None
+
+
+class ProductBase(BaseModel):
+    shopify_product_id: int
+    title: Optional[str] = None
+    vendor: Optional[str] = None
+    product_type: Optional[str] = None
+    handle: Optional[str] = None
+    status: Optional[str] = None
+
+
+class ProductResponse(ProductBase):
+    id: int
+    merchant_id: int
+    shopify_created_at: Optional[datetime] = None
+    shopify_updated_at: Optional[datetime] = None
+    published_at: Optional[datetime] = None
+    synced_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ProductSyncStatus(BaseModel):
+    synced_count: int
+    created_count: int
+    updated_count: int
+    failed_count: int = 0

@@ -5,6 +5,7 @@ from app.database import get_db
 from app.models import Merchant
 from app.middleware.auth import get_merchant_from_header
 from app.services.shopify_oauth import ShopifyOAuth
+from app.services.product_sync import sync_products, sync_single_product
 
 router = APIRouter(prefix="/api/products", tags=["Products"])
 shopify_oauth = ShopifyOAuth()
@@ -15,10 +16,11 @@ async def get_products(
     limit: int = Query(50, description="Number of products to retrieve", ge=1, le=250),
     since_id: Optional[int] = Query(None, description="Retrieve products after this ID"),
     fields: Optional[str] = Query(None, description="Comma-separated list of fields to return"),
-    merchant: Merchant = Depends(get_merchant_from_header)
+    merchant: Merchant = Depends(get_merchant_from_header),
+    db: Session = Depends(get_db)
 ):
     """
-    Get all products from Shopify store
+    Get all products from Shopify store and sync to database
 
     Headers:
         - X-Merchant-Id: Merchant identifier (required)
@@ -42,10 +44,16 @@ async def get_products(
             method="GET"
         )
 
+        # Sync products to database
+        sync_status = None
+        if 'products' in data and isinstance(data['products'], list):
+            sync_status = sync_products(db, merchant, data['products'])
+
         return {
             "merchant_id": merchant.merchant_id,
             "shop_domain": merchant.shop_domain,
-            "data": data
+            "data": data,
+            "sync_status": sync_status
         }
 
     except Exception as e:
@@ -90,10 +98,11 @@ async def get_products_count(
 async def get_product(
     product_id: int = Path(..., description="Shopify product ID"),
     fields: Optional[str] = Query(None, description="Comma-separated list of fields to return"),
-    merchant: Merchant = Depends(get_merchant_from_header)
+    merchant: Merchant = Depends(get_merchant_from_header),
+    db: Session = Depends(get_db)
 ):
     """
-    Get a single product by ID
+    Get a single product by ID and sync to database
 
     Headers:
         - X-Merchant-Id: Merchant identifier (required)
@@ -116,10 +125,16 @@ async def get_product(
             method="GET"
         )
 
+        # Sync single product to database
+        sync_status = None
+        if 'product' in data or 'id' in data:
+            sync_status = sync_single_product(db, merchant, data)
+
         return {
             "merchant_id": merchant.merchant_id,
             "shop_domain": merchant.shop_domain,
-            "data": data
+            "data": data,
+            "sync_status": sync_status
         }
 
     except Exception as e:

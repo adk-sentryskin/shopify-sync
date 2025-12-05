@@ -1,6 +1,8 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text
+from sqlalchemy import Column, Integer, String, DateTime, Text, BigInteger, ForeignKey
 from sqlalchemy.sql import func
 from sqlalchemy.ext.hybrid import hybrid_property
+from sqlalchemy.orm import relationship
+from sqlalchemy.dialects.postgresql import JSONB
 from app.database import Base
 from app.utils.encryption import get_encryption
 
@@ -51,3 +53,39 @@ class Merchant(Base):
 
     def __repr__(self):
         return f"<Merchant(merchant_id={self.merchant_id}, shop_domain={self.shop_domain})>"
+
+
+class Product(Base):
+    __tablename__ = "products"
+    __table_args__ = {'schema': 'shopify_sync'}
+
+    # Primary Keys
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    shopify_product_id = Column(BigInteger, unique=True, index=True, nullable=False)
+    merchant_id = Column(Integer, ForeignKey('shopify_sync.merchants.id'), nullable=False)
+
+    # Searchable Fields
+    title = Column(String(500))
+    vendor = Column(String(255))
+    product_type = Column(String(255))
+    handle = Column(String(255))
+    status = Column(String(50))  # active, draft, archived
+
+    # Timestamps from Shopify
+    shopify_created_at = Column(DateTime(timezone=True))
+    shopify_updated_at = Column(DateTime(timezone=True))
+    published_at = Column(DateTime(timezone=True))
+
+    # Full Shopify data (for flexibility)
+    raw_data = Column(JSONB)  # Complete Shopify product JSON
+
+    # Local timestamps
+    synced_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # Relationships
+    merchant = relationship("Merchant", backref="products")
+
+    def __repr__(self):
+        return f"<Product(shopify_product_id={self.shopify_product_id}, title={self.title})>"
