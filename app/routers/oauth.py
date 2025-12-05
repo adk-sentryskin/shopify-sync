@@ -25,6 +25,9 @@ async def initiate_oauth(
     Returns:
         authorization_url: URL to redirect the merchant for OAuth authorization
     """
+    # Sanitize shop_domain - remove protocol if present
+    shop_domain = oauth_data.shop_domain.replace("https://", "").replace("http://", "").strip("/")
+
     # Check if merchant exists, create if not
     merchant = db.query(Merchant).filter(
         Merchant.merchant_id == oauth_data.merchant_id
@@ -33,18 +36,18 @@ async def initiate_oauth(
     if not merchant:
         merchant = Merchant(
             merchant_id=oauth_data.merchant_id,
-            shop_domain=oauth_data.shop_domain
+            shop_domain=shop_domain
         )
         db.add(merchant)
     else:
         # Update shop domain if changed
-        merchant.shop_domain = oauth_data.shop_domain
+        merchant.shop_domain = shop_domain
 
     db.commit()
 
     # Generate authorization URL
     auth_url = shopify_oauth.get_authorization_url(
-        shop_domain=oauth_data.shop_domain,
+        shop_domain=shop_domain,
         state=oauth_data.merchant_id  # Use merchant_id as state for verification
     )
 

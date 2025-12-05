@@ -25,6 +25,9 @@ class ShopifyOAuth:
         Returns:
             Authorization URL
         """
+        # Sanitize shop_domain - remove protocol if present
+        shop_domain = shop_domain.replace("https://", "").replace("http://", "").strip("/")
+
         params = {
             "client_id": self.api_key,
             "scope": self.scopes,
@@ -82,6 +85,9 @@ class ShopifyOAuth:
         Returns:
             Dictionary containing access_token and scope
         """
+        # Sanitize shop_domain - remove protocol if present
+        shop_domain = shop_domain.replace("https://", "").replace("http://", "").strip("/")
+
         url = f"https://{shop_domain}/admin/oauth/access_token"
 
         payload = {
@@ -106,6 +112,9 @@ class ShopifyOAuth:
         Returns:
             Shop information
         """
+        # Sanitize shop_domain - remove protocol if present
+        shop_domain = shop_domain.replace("https://", "").replace("http://", "").strip("/")
+
         url = f"https://{shop_domain}/admin/api/{self.api_version}/shop.json"
 
         headers = {
@@ -138,6 +147,9 @@ class ShopifyOAuth:
         Returns:
             API response
         """
+        # Sanitize shop_domain - remove protocol if present
+        shop_domain = shop_domain.replace("https://", "").replace("http://", "").strip("/")
+
         url = f"https://{shop_domain}/admin/api/{self.api_version}{endpoint}"
 
         headers = {
