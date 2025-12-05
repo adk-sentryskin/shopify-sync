@@ -134,7 +134,7 @@ jobs:
             --max-instances=10
             --timeout=300
             --allow-unauthenticated
-            --set-env-vars=ENVIRONMENT=staging,DEBUG=false,LOG_LEVEL=INFO,DB_DSN=postgresql://user_dev:iol%40j39Rs1kp%24LY%3F@34.45.186.110:5432/chekoutai?options=-c%20search_path=shopify_sync,SHOPIFY_API_KEY=${{ secrets.SHOPIFY_API_KEY || 'temp_key' }},SHOPIFY_API_SECRET=${{ secrets.SHOPIFY_API_SECRET || 'temp_secret' }},OAUTH_REDIRECT_URL=https://shopify-sync-service-staging-vgcxyi5qqa-uc.a.run.app/api/oauth/callback
+            --set-env-vars=ENVIRONMENT=staging,DEBUG=false,LOG_LEVEL=INFO,DB_DSN=postgresql://user_dev:iol%40j39Rs1kp%24LY%3F@34.45.186.110:5432/chekoutai?options=-c%20search_path=shopify_sync,SHOPIFY_API_KEY=${{ secrets.SHOPIFY_API_KEY || 'aab2e6cdd2b29ce41cc694315e8d649d' }},SHOPIFY_API_SECRET=${{ secrets.SHOPIFY_API_SECRET || '80651241728dca176926999aa7f6e5d6' }},SHOPIFY_SCOPES=read_products,SHOPIFY_API_VERSION=2024-01,OAUTH_REDIRECT_URL=https://shopify-sync-service-staging-vgcxyi5qqa-uc.a.run.app/api/oauth/callback
       - name: Verify deployment
         run: |
           SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }}-staging \
