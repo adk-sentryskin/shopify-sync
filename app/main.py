@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import engine, Base
-from app.routers import oauth, shopify_data
+from app.routers import oauth, shopify_data, webhooks
 from app.config import settings
 from sqlalchemy import text
 
@@ -34,6 +34,7 @@ app.add_middleware(
 # Include routers
 app.include_router(oauth.router)
 app.include_router(shopify_data.router)
+app.include_router(webhooks.router)
 
 
 @app.get("/")
