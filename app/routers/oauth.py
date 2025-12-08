@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import Dict
 from datetime import datetime, timezone
@@ -7,9 +7,58 @@ from app.models import Merchant
 from app.schemas import OAuthInitiate, MerchantResponse
 from app.services.shopify_oauth import ShopifyOAuth
 from app.services.webhook_manager import register_webhooks
+from app.services.product_sync import fetch_all_products_from_shopify
 
 router = APIRouter(prefix="/api/oauth", tags=["OAuth"])
 shopify_oauth = ShopifyOAuth()
+
+
+async def initial_product_sync_background(
+    merchant_id: int,
+    shop_domain: str,
+    access_token: str
+):
+    """
+    Background task to perform initial bulk product sync after OAuth.
+
+    This runs asynchronously to avoid blocking the OAuth callback response.
+    Stores with thousands of products could take several minutes to sync.
+
+    Args:
+        merchant_id: Merchant database ID
+        shop_domain: Shopify shop domain
+        access_token: OAuth access token
+    """
+    try:
+        # Get a new database session for this background task
+        from app.database import SessionLocal
+        db = SessionLocal()
+
+        try:
+            # Get merchant from database
+            merchant = db.query(Merchant).filter(Merchant.id == merchant_id).first()
+
+            if not merchant:
+                print(f"[Initial Sync] Merchant {merchant_id} not found")
+                return
+
+            print(f"[Initial Sync] Starting bulk product sync for merchant {merchant.merchant_id} ({shop_domain})")
+
+            # Fetch and sync all products
+            sync_result = await fetch_all_products_from_shopify(
+                db=db,
+                merchant=merchant,
+                shop_domain=shop_domain,
+                access_token=access_token
+            )
+
+            print(f"[Initial Sync] Completed for {merchant.merchant_id}: {sync_result}")
+
+        finally:
+            db.close()
+
+    except Exception as e:
+        print(f"[Initial Sync] Error during background sync: {str(e)}")
 
 
 @router.post("/initiate", response_model=Dict[str, str])
@@ -62,6 +111,7 @@ async def initiate_oauth(
 @router.get("/callback")
 async def oauth_callback(
     request: Request,
+    background_tasks: BackgroundTasks,
     code: str = Query(..., description="Authorization code from Shopify"),
     shop: str = Query(..., description="Shop domain"),
     state: str = Query(None, description="State parameter (merchant_id)"),
@@ -142,13 +192,26 @@ async def oauth_callback(
         # Automatically register webhooks after OAuth (with database tracking)
         webhook_results = await register_webhooks(shop, merchant.access_token, db, merchant.id)
 
+        # Trigger initial bulk product sync in background
+        # This prevents blocking the OAuth response for stores with many products
+        background_tasks.add_task(
+            initial_product_sync_background,
+            merchant_id=merchant.id,
+            shop_domain=shop,
+            access_token=merchant.access_token
+        )
+
         return {
             "message": "OAuth successful",
             "merchant_id": merchant.merchant_id,
             "shop_domain": shop,
             "shop_name": shop_info.get("shop", {}).get("name"),
             "status": "authenticated",
-            "webhooks_registered": webhook_results
+            "webhooks_registered": webhook_results,
+            "initial_product_sync": {
+                "status": "started",
+                "message": "Initial product sync is running in the background. This may take several minutes for large stores."
+            }
         }
 
     except Exception as e:

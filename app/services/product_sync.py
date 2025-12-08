@@ -3,7 +3,10 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy import func
 from typing import Dict, List, Optional
 from datetime import datetime
+import httpx
+import time
 from app.models import Product, Merchant
+from app.config import settings
 
 
 def parse_shopify_product(product_data: dict) -> dict:
@@ -173,3 +176,134 @@ def sync_single_product(db: Session, merchant: Merchant, product_data: dict) -> 
             'updated_count': 0,
             'failed_count': 1
         }
+
+
+async def fetch_all_products_from_shopify(
+    db: Session,
+    merchant: Merchant,
+    shop_domain: str,
+    access_token: str
+) -> Dict:
+    """
+    Fetch ALL products from Shopify with automatic pagination and sync to database.
+
+    This function is designed for initial bulk sync after OAuth.
+    Uses Shopify's cursor-based pagination to handle stores with thousands of products.
+
+    Args:
+        db: Database session
+        merchant: Merchant object
+        shop_domain: Shopify shop domain (e.g., mystore.myshopify.com)
+        access_token: OAuth access token
+
+    Returns:
+        Dictionary with comprehensive sync statistics:
+        {
+            'status': 'completed' | 'partial' | 'failed',
+            'total_products': int,
+            'synced_count': int,
+            'created_count': int,
+            'updated_count': int,
+            'failed_count': int,
+            'pages_fetched': int,
+            'duration_seconds': float,
+            'error': str (only if status is 'failed')
+        }
+    """
+    start_time = time.time()
+
+    # Sanitize shop domain
+    shop_domain = shop_domain.replace("https://", "").replace("http://", "").strip("/")
+
+    # Aggregate statistics
+    total_stats = {
+        'status': 'completed',
+        'total_products': 0,
+        'synced_count': 0,
+        'created_count': 0,
+        'updated_count': 0,
+        'failed_count': 0,
+        'pages_fetched': 0,
+        'duration_seconds': 0.0
+    }
+
+    try:
+        # Shopify allows max 250 products per request
+        limit = 250
+        since_id = 0  # Start from the beginning
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            while True:
+                # Build URL for this page
+                url = f"https://{shop_domain}/admin/api/{settings.SHOPIFY_API_VERSION}/products.json"
+                params = {
+                    'limit': limit,
+                    'since_id': since_id
+                }
+
+                headers = {
+                    'X-Shopify-Access-Token': access_token,
+                    'Content-Type': 'application/json'
+                }
+
+                # Fetch products from Shopify
+                try:
+                    response = await client.get(url, headers=headers, params=params)
+                    response.raise_for_status()
+                    data = response.json()
+                except httpx.HTTPError as e:
+                    print(f"HTTP error fetching products: {str(e)}")
+                    total_stats['status'] = 'partial' if total_stats['synced_count'] > 0 else 'failed'
+                    total_stats['error'] = f"HTTP error: {str(e)}"
+                    break
+
+                products = data.get('products', [])
+                total_stats['pages_fetched'] += 1
+
+                # If no products returned, we've reached the end
+                if not products:
+                    break
+
+                # Sync this batch of products
+                batch_stats = sync_products(db, merchant, products)
+
+                # Aggregate statistics
+                total_stats['synced_count'] += batch_stats['synced_count']
+                total_stats['created_count'] += batch_stats['created_count']
+                total_stats['updated_count'] += batch_stats['updated_count']
+                total_stats['failed_count'] += batch_stats['failed_count']
+                total_stats['total_products'] += len(products)
+
+                print(f"Synced page {total_stats['pages_fetched']}: {batch_stats['synced_count']}/{len(products)} products")
+
+                # If we got fewer products than the limit, we've reached the end
+                if len(products) < limit:
+                    break
+
+                # Update since_id to the last product's ID for pagination
+                since_id = products[-1]['id']
+
+                # Optional: Add a small delay to be respectful to Shopify's API
+                # Shopify's rate limit is 2 requests/second for standard plans
+                await httpx.AsyncClient().aclose()
+                time.sleep(0.5)  # 500ms delay between requests
+
+        # Calculate duration
+        total_stats['duration_seconds'] = round(time.time() - start_time, 2)
+
+        # Set final status
+        if total_stats['failed_count'] > 0 and total_stats['synced_count'] == 0:
+            total_stats['status'] = 'failed'
+        elif total_stats['failed_count'] > 0:
+            total_stats['status'] = 'partial'
+        else:
+            total_stats['status'] = 'completed'
+
+        return total_stats
+
+    except Exception as e:
+        total_stats['status'] = 'failed'
+        total_stats['error'] = str(e)
+        total_stats['duration_seconds'] = round(time.time() - start_time, 2)
+        print(f"Error in bulk product fetch: {str(e)}")
+        return total_stats
