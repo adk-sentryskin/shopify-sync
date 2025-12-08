@@ -173,8 +173,6 @@ def get_scheduler_status() -> Dict:
     Returns:
         Dictionary with scheduler status and job details
     """
-    global scheduler
-
     if scheduler is None:
         return {
             "running": False,
@@ -238,8 +236,6 @@ def reschedule_job(hour: int = 2, minute: int = 0):
         hour: Hour of the day (0-23, default: 2)
         minute: Minute of the hour (0-59, default: 0)
     """
-    global scheduler
-
     if scheduler is None:
         raise Exception("Scheduler is not running")
 
