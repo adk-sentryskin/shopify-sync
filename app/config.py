@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     # OAuth
     OAUTH_REDIRECT_URL: str
 
+    # Application URL (for webhook registration)
+    # If not provided, will be derived from OAUTH_REDIRECT_URL
+    APP_URL: Optional[str] = None
+
     # Security - Token Encryption
     # Generate key using: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     ENCRYPTION_KEY: str

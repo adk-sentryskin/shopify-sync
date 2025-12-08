@@ -6,6 +6,7 @@ from app.database import get_db
 from app.models import Merchant
 from app.schemas import OAuthInitiate, MerchantResponse
 from app.services.shopify_oauth import ShopifyOAuth
+from app.services.webhook_manager import register_webhooks
 
 router = APIRouter(prefix="/api/oauth", tags=["OAuth"])
 shopify_oauth = ShopifyOAuth()
@@ -138,12 +139,16 @@ async def oauth_callback(
         # Get shop info to verify
         shop_info = await shopify_oauth.get_shop_info(shop, merchant.access_token)
 
+        # Automatically register webhooks after OAuth
+        webhook_results = await register_webhooks(shop, merchant.access_token)
+
         return {
             "message": "OAuth successful",
             "merchant_id": merchant.merchant_id,
             "shop_domain": shop,
             "shop_name": shop_info.get("shop", {}).get("name"),
-            "status": "authenticated"
+            "status": "authenticated",
+            "webhooks_registered": webhook_results
         }
 
     except Exception as e:
