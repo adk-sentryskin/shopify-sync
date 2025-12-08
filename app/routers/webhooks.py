@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Request, HTTPException, Depends, Header, Query
 from sqlalchemy.orm import Session
 from typing import Optional
+from datetime import datetime, timezone
 import json
 from app.database import get_db
 from app.models import Merchant, Product
@@ -169,16 +170,19 @@ async def product_delete_webhook(
                 detail=f"Merchant not found for shop: {shop_domain}"
             )
 
-        # Find and delete the product
+        # Find and soft delete the product
         product = db.query(Product).filter(
             Product.shopify_product_id == shopify_product_id,
             Product.merchant_id == merchant.id
         ).first()
 
         if product:
-            db.delete(product)
+            # Soft delete: Mark as deleted instead of removing from database
+            product.is_deleted = 1
+            product.status = 'deleted'
+            product.deleted_at = datetime.now(timezone.utc)
             db.commit()
-            message = "Product deleted from database"
+            message = "Product soft deleted (marked as deleted in database)"
         else:
             message = "Product not found in database (already deleted or never synced)"
 

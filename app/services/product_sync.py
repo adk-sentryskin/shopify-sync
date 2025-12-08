@@ -396,9 +396,10 @@ def search_products_by_sku(db: Session, merchant: Merchant, sku: str) -> List[Pr
     Returns:
         List of products containing variants with this SKU
     """
-    # Get all products for this merchant
+    # Get all active products for this merchant
     products = db.query(Product).filter(
-        Product.merchant_id == merchant.id
+        Product.merchant_id == merchant.id,
+        Product.is_deleted == 0  # Only search active products
     ).all()
 
     # Filter products that have a variant with this SKU

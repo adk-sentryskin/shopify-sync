@@ -79,6 +79,10 @@ class Product(Base):
     # Full Shopify data (for flexibility)
     raw_data = Column(JSONB)  # Complete Shopify product JSON
 
+    # Soft Delete Fields
+    is_deleted = Column(Integer, default=0)  # 0=active, 1=soft deleted
+    deleted_at = Column(DateTime(timezone=True), nullable=True)  # When product was deleted
+
     # Local timestamps
     synced_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     created_at = Column(DateTime(timezone=True), server_default=func.now())
