@@ -1,10 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import Dict
+from typing import Dict, Optional
 from app.database import get_db
 from app.models import Merchant, Product
 from app.middleware.auth import get_merchant_from_header
 from app.services.product_reconciliation import reconcile_products, force_full_resync
+from app.services.scheduler import (
+    get_scheduler_status,
+    trigger_manual_reconciliation,
+    reschedule_job
+)
 
 router = APIRouter(prefix="/api/sync", tags=["Sync & Reconciliation"])
 
@@ -254,3 +259,119 @@ async def sync_info():
             "header": "X-Merchant-Id"
         }
     }
+
+
+@router.get("/scheduler/status")
+async def get_scheduler_status_endpoint():
+    """
+    Get scheduler status and job information
+
+    Returns information about the scheduled reconciliation job including:
+    - Whether scheduler is running
+    - Next scheduled run time
+    - Job configuration
+
+    No authentication required - this is a system status endpoint
+    """
+    try:
+        status = get_scheduler_status()
+        return {
+            "scheduler": status
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get scheduler status: {str(e)}"
+        )
+
+
+@router.post("/scheduler/trigger")
+async def trigger_manual_reconciliation_endpoint(
+    merchant_id: Optional[str] = Query(None, description="Optional merchant ID. If not provided, runs for all merchants")
+):
+    """
+    Manually trigger reconciliation (bypasses schedule)
+
+    Triggers an immediate reconciliation run without waiting for the scheduled time.
+
+    Query Parameters:
+        - merchant_id: Optional merchant ID. If provided, only reconciles that merchant.
+                      If not provided, reconciles all merchants.
+
+    Returns:
+        Execution results
+    """
+    try:
+        # Get merchant database ID if merchant_id provided
+        merchant_db_id = None
+        if merchant_id:
+            from app.database import SessionLocal
+            db = SessionLocal()
+            try:
+                merchant = db.query(Merchant).filter(
+                    Merchant.merchant_id == merchant_id,
+                    Merchant.is_active == 1
+                ).first()
+
+                if not merchant:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Merchant {merchant_id} not found or inactive"
+                    )
+
+                merchant_db_id = merchant.id
+            finally:
+                db.close()
+
+        result = await trigger_manual_reconciliation(merchant_db_id)
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to trigger reconciliation: {str(e)}"
+        )
+
+
+@router.post("/scheduler/reschedule")
+async def reschedule_job_endpoint(
+    hour: int = Query(..., description="Hour of day (0-23) to run reconciliation", ge=0, le=23),
+    minute: int = Query(0, description="Minute of hour (0-59) to run reconciliation", ge=0, le=59)
+):
+    """
+    Reschedule the daily reconciliation job
+
+    Changes the time when the daily reconciliation job runs.
+
+    Query Parameters:
+        - hour: Hour of the day (0-23)
+        - minute: Minute of the hour (0-59, default: 0)
+
+    Returns:
+        Confirmation with new schedule time
+
+    Example:
+        POST /api/sync/scheduler/reschedule?hour=3&minute=30
+        Reschedules to run daily at 3:30 AM UTC
+    """
+    try:
+        reschedule_job(hour=hour, minute=minute)
+
+        return {
+            "status": "success",
+            "message": f"Reconciliation rescheduled to {hour:02d}:{minute:02d} UTC",
+            "new_schedule": {
+                "hour": hour,
+                "minute": minute,
+                "timezone": "UTC"
+            }
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to reschedule job: {str(e)}"
+        )

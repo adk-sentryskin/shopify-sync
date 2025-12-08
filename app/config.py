@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     # Generate key using: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     ENCRYPTION_KEY: str
 
+    # Scheduler Configuration
+    ENABLE_SCHEDULER: bool = True  # Set to False to disable scheduled jobs
+    RECONCILIATION_HOUR: int = 2  # Hour of day (0-23) to run reconciliation (default: 2 AM)
+    RECONCILIATION_MINUTE: int = 0  # Minute of hour (0-59) to run reconciliation (default: 0)
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

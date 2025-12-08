@@ -1,9 +1,16 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import engine, Base
 from app.routers import oauth, shopify_data, webhooks, variants, sync
 from app.config import settings
+from app.services.scheduler import start_scheduler, stop_scheduler
 from sqlalchemy import text
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Create schema if it doesn't exist
 with engine.connect() as conn:
@@ -13,13 +20,34 @@ with engine.connect() as conn:
 # Create database tables
 Base.metadata.create_all(bind=engine)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    FastAPI lifespan event handler - manages startup and shutdown events
+    """
+    # Startup
+    if settings.ENABLE_SCHEDULER:
+        logger.info("Starting scheduler for daily product reconciliation")
+        start_scheduler()
+    else:
+        logger.info("Scheduler disabled (ENABLE_SCHEDULER=False)")
+
+    yield
+
+    # Shutdown
+    logger.info("Shutting down scheduler")
+    stop_scheduler()
+
+
 # Initialize FastAPI app
 app = FastAPI(
     title="Shopify Products API",
     description="OAuth-based microservice for syncing Shopify products per merchant",
     version="1.0.0",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
+    lifespan=lifespan
 )
 
 # CORS configuration

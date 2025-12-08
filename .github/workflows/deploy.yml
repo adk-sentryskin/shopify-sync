@@ -134,7 +134,7 @@ jobs:
             --max-instances=10
             --timeout=300
             --allow-unauthenticated
-            --set-env-vars=ENVIRONMENT=staging,DEBUG=false,LOG_LEVEL=INFO,DB_DSN=postgresql://user_dev:iol%40j39Rs1kp%24LY%3F@34.45.186.110:5432/chekoutai?options=-c%20search_path=shopify_sync,SHOPIFY_SCOPES=read_products,SHOPIFY_API_VERSION=2024-01,OAUTH_REDIRECT_URL=https://shopify-sync-service-staging-vgcxyi5qqa-uc.a.run.app/api/oauth/callback,ENCRYPTION_KEY=AJ0TEQ-tHPSQAPsQ4NlgEJd38dFmsLxCNbieWcZIRiI=,APP_URL=https://shopify-sync-service-staging-vgcxyi5qqa-uc.a.run.app
+            --set-env-vars=ENVIRONMENT=staging,DEBUG=false,LOG_LEVEL=INFO,DB_DSN=postgresql://user_dev:iol%40j39Rs1kp%24LY%3F@34.45.186.110:5432/chekoutai?options=-c%20search_path=shopify_sync,SHOPIFY_SCOPES=read_products,SHOPIFY_API_VERSION=2024-01,OAUTH_REDIRECT_URL=https://shopify-sync-service-staging-vgcxyi5qqa-uc.a.run.app/api/oauth/callback,ENCRYPTION_KEY=AJ0TEQ-tHPSQAPsQ4NlgEJd38dFmsLxCNbieWcZIRiI=,APP_URL=https://shopify-sync-service-staging-vgcxyi5qqa-uc.a.run.app,ENABLE_SCHEDULER=true,RECONCILIATION_HOUR=2,RECONCILIATION_MINUTE=0
       - name: Verify deployment
         run: |
           SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }}-staging \
