@@ -6,7 +6,7 @@ from app.database import get_db
 from app.models import Merchant, Product
 from app.services.product_sync import upsert_product
 from app.utils.webhook_verification import verify_webhook, extract_shop_domain, extract_webhook_topic
-from app.services.webhook_manager import register_webhooks, list_webhooks, delete_webhook
+from app.services.webhook_manager import register_webhooks, list_webhooks, delete_webhook, sync_webhooks
 
 router = APIRouter(prefix="/api/webhooks", tags=["Webhooks"])
 
@@ -267,7 +267,7 @@ async def register_webhooks_endpoint(
         )
 
     try:
-        results = await register_webhooks(merchant.shop_domain, merchant.access_token)
+        results = await register_webhooks(merchant.shop_domain, merchant.access_token, db, merchant.id)
 
         return {
             "status": "success",
@@ -366,11 +366,11 @@ async def delete_webhook_endpoint(
         )
 
     try:
-        await delete_webhook(merchant.shop_domain, merchant.access_token, webhook_id)
+        await delete_webhook(merchant.shop_domain, merchant.access_token, webhook_id, db)
 
         return {
             "status": "success",
-            "message": "Webhook deleted successfully",
+            "message": "Webhook deleted successfully (marked as inactive in database)",
             "webhook_id": webhook_id,
             "merchant_id": merchant_id
         }
@@ -378,4 +378,54 @@ async def delete_webhook_endpoint(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to delete webhook: {str(e)}"
+        )
+
+
+@router.post("/sync")
+async def sync_webhooks_endpoint(
+    merchant_id: str = Query(..., description="Merchant ID to sync webhooks for"),
+    db: Session = Depends(get_db)
+):
+    """
+    Sync webhooks between database and Shopify
+
+    Detects and fixes drift:
+    - Marks webhooks as inactive if deleted from Shopify
+    - Discovers webhooks created outside this app
+
+    Query Parameters:
+        - merchant_id: Unique merchant identifier
+
+    Returns:
+        Sync results with counts
+    """
+    merchant = db.query(Merchant).filter(
+        Merchant.merchant_id == merchant_id,
+        Merchant.is_active == 1
+    ).first()
+
+    if not merchant:
+        raise HTTPException(
+            status_code=404,
+            detail="Merchant not found or not active"
+        )
+
+    if not merchant.access_token:
+        raise HTTPException(
+            status_code=400,
+            detail="Merchant has no access token. Complete OAuth first."
+        )
+
+    try:
+        sync_results = await sync_webhooks(merchant.shop_domain, merchant.access_token, db, merchant.id)
+
+        return {
+            **sync_results,
+            "merchant_id": merchant_id,
+            "shop_domain": merchant.shop_domain
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to sync webhooks: {str(e)}"
         )

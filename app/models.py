@@ -89,3 +89,36 @@ class Product(Base):
 
     def __repr__(self):
         return f"<Product(shopify_product_id={self.shopify_product_id}, title={self.title})>"
+
+
+class Webhook(Base):
+    """
+    Tracks webhook subscriptions registered with Shopify
+
+    """
+    __tablename__ = "webhooks"
+    __table_args__ = {'schema': 'shopify_sync'}
+
+    # Primary Keys
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    merchant_id = Column(Integer, ForeignKey('shopify_sync.merchants.id'), nullable=False)
+    shopify_webhook_id = Column(BigInteger, unique=True, index=True, nullable=False)
+
+    # Webhook Details
+    topic = Column(String(100), nullable=False, index=True)  # e.g., "products/create"
+    address = Column(String(500), nullable=False)  # Full webhook URL
+    format = Column(String(20), default="json")  # json or xml
+
+    # Status Tracking
+    is_active = Column(Integer, default=1)  # 1=active, 0=deleted/inactive
+    last_verified_at = Column(DateTime(timezone=True))  # Last time we verified it exists in Shopify
+
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # Relationships
+    merchant = relationship("Merchant", backref="webhooks")
+
+    def __repr__(self):
+        return f"<Webhook(topic={self.topic}, merchant_id={self.merchant_id}, shopify_webhook_id={self.shopify_webhook_id})>"

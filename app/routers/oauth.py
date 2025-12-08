@@ -139,8 +139,8 @@ async def oauth_callback(
         # Get shop info to verify
         shop_info = await shopify_oauth.get_shop_info(shop, merchant.access_token)
 
-        # Automatically register webhooks after OAuth
-        webhook_results = await register_webhooks(shop, merchant.access_token)
+        # Automatically register webhooks after OAuth (with database tracking)
+        webhook_results = await register_webhooks(shop, merchant.access_token, db, merchant.id)
 
         return {
             "message": "OAuth successful",
