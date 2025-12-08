@@ -307,3 +307,149 @@ async def fetch_all_products_from_shopify(
         total_stats['duration_seconds'] = round(time.time() - start_time, 2)
         print(f"Error in bulk product fetch: {str(e)}")
         return total_stats
+
+
+def extract_variants_from_product(product: Product) -> List[Dict]:
+    """
+    Extract all variants from a product's raw_data
+
+    Parses the JSONB raw_data field and returns a clean list of variants
+    with normalized fields for easy consumption by API endpoints.
+
+    Args:
+        product: Product object with raw_data field
+
+    Returns:
+        List of variant dictionaries with normalized fields:
+        - variant_id: Shopify variant ID
+        - product_id: Parent product ID
+        - sku: Stock Keeping Unit
+        - barcode: Product barcode
+        - title: Variant title (e.g., "Blue / Medium")
+        - price: Variant price
+        - compare_at_price: Original price (for discounts)
+        - inventory_quantity: Current stock level
+        - inventory_policy: "deny" or "continue" when out of stock
+        - weight: Variant weight
+        - weight_unit: Unit of weight (kg, lb, etc)
+        - option1, option2, option3: Variant options (size, color, etc)
+        - image_id: Associated image ID
+    """
+    if not product.raw_data:
+        return []
+
+    variants = product.raw_data.get('variants', [])
+
+    # Normalize variant data
+    return [
+        {
+            'variant_id': v.get('id'),
+            'product_id': product.shopify_product_id,
+            'sku': v.get('sku'),
+            'barcode': v.get('barcode'),
+            'title': v.get('title'),
+            'price': v.get('price'),
+            'compare_at_price': v.get('compare_at_price'),
+            'inventory_quantity': v.get('inventory_quantity', 0),
+            'inventory_policy': v.get('inventory_policy'),
+            'weight': v.get('weight'),
+            'weight_unit': v.get('weight_unit'),
+            'option1': v.get('option1'),
+            'option2': v.get('option2'),
+            'option3': v.get('option3'),
+            'image_id': v.get('image_id')
+        }
+        for v in variants
+    ]
+
+
+def get_total_inventory(product: Product) -> int:
+    """
+    Calculate total inventory across all variants
+
+    Sums up inventory_quantity for all variants in a product.
+    Useful for determining if a product is in stock or low on inventory.
+
+    Args:
+        product: Product object
+
+    Returns:
+        Total inventory quantity across all variants
+    """
+    variants = extract_variants_from_product(product)
+    return sum(v.get('inventory_quantity', 0) for v in variants)
+
+
+def search_products_by_sku(db: Session, merchant: Merchant, sku: str) -> List[Product]:
+    """
+    Find products that have a variant with the specified SKU
+
+    Searches through the JSONB raw_data field to find matching SKUs.
+    Note: This is a simple implementation. For better performance with
+    large datasets, consider adding GIN indexes on the variants field.
+
+    Args:
+        db: Database session
+        merchant: Merchant object
+        sku: Variant SKU to search for
+
+    Returns:
+        List of products containing variants with this SKU
+    """
+    # Get all products for this merchant
+    products = db.query(Product).filter(
+        Product.merchant_id == merchant.id
+    ).all()
+
+    # Filter products that have a variant with this SKU
+    matching_products = []
+    for product in products:
+        variants = extract_variants_from_product(product)
+        if any(v.get('sku') == sku for v in variants):
+            matching_products.append(product)
+
+    return matching_products
+
+
+def find_low_inventory_products(
+    db: Session,
+    merchant: Merchant,
+    threshold: int = 10
+) -> List[Dict]:
+    """
+    Find products with total inventory below threshold
+
+    Useful for inventory management and low stock alerts.
+
+    Args:
+        db: Database session
+        merchant: Merchant object
+        threshold: Inventory threshold (default: 10)
+
+    Returns:
+        List of products with low inventory, including:
+        - product_id: Shopify product ID
+        - title: Product title
+        - total_inventory: Sum of all variant inventory
+        - variants: List of all variants with inventory details
+    """
+    products = db.query(Product).filter(
+        Product.merchant_id == merchant.id,
+        Product.status == 'active'
+    ).all()
+
+    low_inventory = []
+
+    for product in products:
+        total_inv = get_total_inventory(product)
+        if total_inv < threshold:
+            low_inventory.append({
+                'product_id': product.shopify_product_id,
+                'title': product.title,
+                'vendor': product.vendor,
+                'handle': product.handle,
+                'total_inventory': total_inv,
+                'variants': extract_variants_from_product(product)
+            })
+
+    return low_inventory
