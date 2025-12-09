@@ -9,7 +9,10 @@ from app.services.shopify_oauth import ShopifyOAuth
 from app.services.webhook_manager import register_webhooks
 from app.services.product_sync import fetch_all_products_from_shopify
 from app.middleware.auth import get_merchant_from_header
+from app.utils.helpers import sanitize_shop_domain
+import logging
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/oauth", tags=["OAuth"])
 shopify_oauth = ShopifyOAuth()
 
@@ -19,33 +22,21 @@ async def initial_product_sync_background(
     shop_domain: str,
     access_token: str
 ):
-    """
-    Background task to perform initial bulk product sync after OAuth.
-
-    This runs asynchronously to avoid blocking the OAuth callback response.
-    Stores with thousands of products could take several minutes to sync.
-
-    Args:
-        merchant_id: Merchant database ID
-        shop_domain: Shopify shop domain
-        access_token: OAuth access token
-    """
+    """Background task to perform initial bulk product sync after OAuth"""
     try:
         # Get a new database session for this background task
         from app.database import SessionLocal
         db = SessionLocal()
 
         try:
-            # Get merchant from database
             merchant = db.query(Merchant).filter(Merchant.id == merchant_id).first()
 
             if not merchant:
-                print(f"[Initial Sync] Merchant {merchant_id} not found")
+                logger.warning(f"[Initial Sync] Merchant {merchant_id} not found")
                 return
 
-            print(f"[Initial Sync] Starting bulk product sync for merchant {merchant.merchant_id} ({shop_domain})")
+            logger.info(f"[Initial Sync] Starting bulk product sync for merchant {merchant.merchant_id}")
 
-            # Fetch and sync all products
             sync_result = await fetch_all_products_from_shopify(
                 db=db,
                 merchant=merchant,
@@ -53,13 +44,13 @@ async def initial_product_sync_background(
                 access_token=access_token
             )
 
-            print(f"[Initial Sync] Completed for {merchant.merchant_id}: {sync_result}")
+            logger.info(f"[Initial Sync] Completed for {merchant.merchant_id}: {sync_result}")
 
         finally:
             db.close()
 
     except Exception as e:
-        print(f"[Initial Sync] Error during background sync: {str(e)}")
+        logger.error(f"[Initial Sync] Error during background sync: {str(e)}")
 
 
 @router.post("/initiate", response_model=Dict[str, str])
@@ -67,18 +58,8 @@ async def initiate_oauth(
     oauth_data: OAuthInitiate,
     db: Session = Depends(get_db)
 ):
-    """
-    Initiate OAuth flow for a merchant
-
-    Request Body:
-        - shop_domain: Shopify shop domain (e.g., mystore.myshopify.com)
-        - merchant_id: Unique identifier for the merchant
-
-    Returns:
-        authorization_url: URL to redirect the merchant for OAuth authorization
-    """
-    # Sanitize shop_domain - remove protocol if present
-    shop_domain = oauth_data.shop_domain.replace("https://", "").replace("http://", "").strip("/")
+    """Initiate OAuth flow for a merchant"""
+    shop_domain = sanitize_shop_domain(oauth_data.shop_domain)
 
     # Check if merchant exists, create if not
     merchant = db.query(Merchant).filter(
@@ -92,15 +73,13 @@ async def initiate_oauth(
         )
         db.add(merchant)
     else:
-        # Update shop domain if changed
         merchant.shop_domain = shop_domain
 
     db.commit()
 
-    # Generate authorization URL
     auth_url = shopify_oauth.get_authorization_url(
         shop_domain=shop_domain,
-        state=oauth_data.merchant_id  # Use merchant_id as state for verification
+        state=oauth_data.merchant_id
     )
 
     return {
@@ -118,29 +97,15 @@ async def oauth_callback(
     state: str = Query(None, description="State parameter (merchant_id)"),
     db: Session = Depends(get_db)
 ):
-    """
-    OAuth callback endpoint - Shopify redirects here after authorization
-
-    Query Parameters:
-        - code: Authorization code
-        - shop: Shop domain
-        - state: Merchant ID (passed as state)
-        - hmac: HMAC signature for verification
-        - host: Host parameter from Shopify
-        - timestamp: Timestamp parameter from Shopify
-    """
-    # Get ALL query parameters for HMAC verification
-    # Shopify includes all params (code, shop, state, timestamp, host) in HMAC calculation
+    """OAuth callback endpoint - Shopify redirects here after authorization"""
     params = dict(request.query_params)
 
-    # Validate timestamp to prevent replay attacks (Shopify recommends < 5 minutes)
     if "timestamp" in params:
         try:
             callback_timestamp = int(params["timestamp"])
             current_timestamp = int(datetime.now(timezone.utc).timestamp())
             time_difference = abs(current_timestamp - callback_timestamp)
 
-            # Reject if older than 5 minutes (300 seconds)
             if time_difference > 300:
                 raise HTTPException(
                     status_code=400,
@@ -158,7 +123,6 @@ async def oauth_callback(
             detail="Invalid HMAC signature"
         )
 
-    # Find merchant by state (merchant_id)
     if not state:
         raise HTTPException(
             status_code=400,
@@ -177,24 +141,17 @@ async def oauth_callback(
         )
 
     try:
-        # Exchange code for access token
         token_data = await shopify_oauth.exchange_code_for_token(shop, code)
 
-        # Update merchant with access token
         merchant.access_token = token_data.get("access_token")
         merchant.scope = token_data.get("scope")
         merchant.is_active = 1
 
         db.commit()
 
-        # Get shop info to verify
         shop_info = await shopify_oauth.get_shop_info(shop, merchant.access_token)
-
-        # Automatically register webhooks after OAuth (with database tracking)
         webhook_results = await register_webhooks(shop, merchant.access_token, db, merchant.id)
 
-        # Trigger initial bulk product sync in background
-        # This prevents blocking the OAuth response for stores with many products
         background_tasks.add_task(
             initial_product_sync_background,
             merchant_id=merchant.id,
@@ -227,13 +184,5 @@ async def oauth_callback(
 async def check_oauth_status(
     merchant: Merchant = Depends(get_merchant_from_header)
 ):
-    """
-    Check OAuth status for a merchant
-
-    Headers:
-        - X-Merchant-Id: Merchant identifier (required)
-
-    Returns:
-        Merchant information including OAuth status, shop domain, and token scope
-    """
+    """Check OAuth status for a merchant"""
     return merchant

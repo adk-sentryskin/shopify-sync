@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from app.config import settings
 from app.models import Webhook, Merchant
+from app.utils.helpers import sanitize_shop_domain
 
 
 WEBHOOK_CONFIG = [
@@ -193,7 +194,7 @@ async def create_webhook(shop_domain: str, access_token: str, webhook: Dict) -> 
     Returns:
         Shopify API response with created webhook details
     """
-    shop_domain = shop_domain.replace("https://", "").replace("http://", "").strip("/")
+    shop_domain = sanitize_shop_domain(shop_domain)
     url = f"https://{shop_domain}/admin/api/{settings.SHOPIFY_API_VERSION}/webhooks.json"
 
     headers = {
@@ -222,7 +223,7 @@ async def update_webhook(shop_domain: str, access_token: str, webhook_id: int, w
     Returns:
         Shopify API response with updated webhook details
     """
-    shop_domain = shop_domain.replace("https://", "").replace("http://", "").strip("/")
+    shop_domain = sanitize_shop_domain(shop_domain)
     url = f"https://{shop_domain}/admin/api/{settings.SHOPIFY_API_VERSION}/webhooks/{webhook_id}.json"
 
     headers = {
@@ -250,7 +251,7 @@ async def get_existing_webhook(shop_domain: str, access_token: str, topic: str) 
     Returns:
         Webhook dict if found, None otherwise
     """
-    shop_domain = shop_domain.replace("https://", "").replace("http://", "").strip("/")
+    shop_domain = sanitize_shop_domain(shop_domain)
     url = f"https://{shop_domain}/admin/api/{settings.SHOPIFY_API_VERSION}/webhooks.json"
 
     headers = {
@@ -282,7 +283,7 @@ async def get_existing_webhook_by_id(shop_domain: str, access_token: str, webhoo
     Returns:
         Webhook dict if found, None if deleted
     """
-    shop_domain = shop_domain.replace("https://", "").replace("http://", "").strip("/")
+    shop_domain = sanitize_shop_domain(shop_domain)
     url = f"https://{shop_domain}/admin/api/{settings.SHOPIFY_API_VERSION}/webhooks/{webhook_id}.json"
 
     headers = {
@@ -311,7 +312,7 @@ async def list_webhooks(shop_domain: str, access_token: str) -> List[Dict]:
     Returns:
         List of all webhooks registered for this shop
     """
-    shop_domain = shop_domain.replace("https://", "").replace("http://", "").strip("/")
+    shop_domain = sanitize_shop_domain(shop_domain)
     url = f"https://{shop_domain}/admin/api/{settings.SHOPIFY_API_VERSION}/webhooks.json"
 
     headers = {
@@ -337,7 +338,7 @@ async def delete_webhook(shop_domain: str, access_token: str, webhook_id: int, d
     Returns:
         True if deleted successfully
     """
-    shop_domain = shop_domain.replace("https://", "").replace("http://", "").strip("/")
+    shop_domain = sanitize_shop_domain(shop_domain)
     url = f"https://{shop_domain}/admin/api/{settings.SHOPIFY_API_VERSION}/webhooks/{webhook_id}.json"
 
     headers = {

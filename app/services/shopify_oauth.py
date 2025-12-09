@@ -4,6 +4,7 @@ import httpx
 from urllib.parse import urlencode
 from typing import Dict, Optional
 from app.config import settings
+from app.utils.helpers import sanitize_shop_domain
 
 
 class ShopifyOAuth:
@@ -25,8 +26,7 @@ class ShopifyOAuth:
         Returns:
             Authorization URL
         """
-        # Sanitize shop_domain - remove protocol if present
-        shop_domain = shop_domain.replace("https://", "").replace("http://", "").strip("/")
+        shop_domain = sanitize_shop_domain(shop_domain)
 
         params = {
             "client_id": self.api_key,
@@ -85,8 +85,7 @@ class ShopifyOAuth:
         Returns:
             Dictionary containing access_token and scope
         """
-        # Sanitize shop_domain - remove protocol if present
-        shop_domain = shop_domain.replace("https://", "").replace("http://", "").strip("/")
+        shop_domain = sanitize_shop_domain(shop_domain)
 
         url = f"https://{shop_domain}/admin/oauth/access_token"
 
@@ -112,8 +111,7 @@ class ShopifyOAuth:
         Returns:
             Shop information
         """
-        # Sanitize shop_domain - remove protocol if present
-        shop_domain = shop_domain.replace("https://", "").replace("http://", "").strip("/")
+        shop_domain = sanitize_shop_domain(shop_domain)
 
         url = f"https://{shop_domain}/admin/api/{self.api_version}/shop.json"
 
@@ -147,8 +145,7 @@ class ShopifyOAuth:
         Returns:
             API response
         """
-        # Sanitize shop_domain - remove protocol if present
-        shop_domain = shop_domain.replace("https://", "").replace("http://", "").strip("/")
+        shop_domain = sanitize_shop_domain(shop_domain)
 
         url = f"https://{shop_domain}/admin/api/{self.api_version}{endpoint}"
 

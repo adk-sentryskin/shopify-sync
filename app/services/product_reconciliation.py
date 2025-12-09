@@ -3,9 +3,13 @@ from typing import Dict, List
 from datetime import datetime, timezone
 import httpx
 import time
+import logging
 from app.models import Product, Merchant
 from app.config import settings
 from app.services.product_sync import parse_shopify_product, upsert_product
+from app.utils.helpers import sanitize_shop_domain
+
+logger = logging.getLogger(__name__)
 
 
 async def reconcile_products(
@@ -51,8 +55,7 @@ async def reconcile_products(
     """
     start_time = time.time()
 
-    # Sanitize shop domain
-    shop_domain = shop_domain.replace("https://", "").replace("http://", "").strip("/")
+    shop_domain = sanitize_shop_domain(shop_domain)
 
     # Initialize results
     results = {
