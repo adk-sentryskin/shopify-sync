@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     # Database - can be provided as env var or secret
     DB_DSN: str
 
+    # API Key for service-to-service authentication
+    # Generate using: python -c "import secrets; print(secrets.token_urlsafe(32))"
+    API_KEY: str
+
     # Shopify API - can be provided as env vars or secrets
     # SHOPIFY_API_KEY: str  # Temporarily commented out - Key: 2d7b087dea3ffdfc52f7d01bc0111c27
     # SHOPIFY_API_SECRET: str  # Temporarily commented out - Secret: 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

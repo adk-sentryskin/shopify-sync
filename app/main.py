@@ -1,12 +1,15 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.openapi.utils import get_openapi
 from app.database import engine, Base
 from app.routers import oauth, shopify_data, webhooks, variants, sync
 from app.config import settings
 from app.services.scheduler import start_scheduler, stop_scheduler
 from sqlalchemy import text
 import logging
+import secrets
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -40,24 +43,159 @@ async def lifespan(app: FastAPI):
     stop_scheduler()
 
 
-# Initialize FastAPI app
+# Initialize FastAPI app with security schemes for Swagger UI
 app = FastAPI(
     title="Shopify Products API",
     description="OAuth-based microservice for syncing Shopify products per merchant",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
-    lifespan=lifespan
+    lifespan=lifespan,
+    swagger_ui_parameters={
+        "persistAuthorization": True  # Remember authorization between page refreshes
+    }
 )
 
-# CORS configuration
+# Define security schemes for Swagger UI
+# This adds "Authorize" button in Swagger UI to input headers
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+
+    # Add security schemes for API Key and Merchant ID headers
+    openapi_schema["components"]["securitySchemes"] = {
+        "ApiKeyAuth": {
+            "type": "apiKey",
+            "in": "header",
+            "name": "X-API-Key",
+            "description": "API Key for authentication (required for all endpoints except public ones)"
+        },
+        "MerchantIdAuth": {
+            "type": "apiKey",
+            "in": "header",
+            "name": "X-Merchant-Id",
+            "description": "Merchant ID header (required for product, variant, and sync endpoints)"
+        }
+    }
+
+    # Apply security to specific endpoints only (not globally)
+    # Endpoints that should be PUBLIC (no lock icon):
+    # - OAuth callback: /api/oauth/callback (Shopify redirects here)
+    # - Webhook receivers: /api/webhooks/products/* (use HMAC verification)
+    # - Health/info endpoints: /, /health
+    # - Documentation endpoints: /api/webhooks/, /api/variants/, /api/sync/
+
+    public_paths = {
+        "/",
+        "/health",
+        "/api/oauth/callback",  # Public - Shopify redirects here
+        "/api/webhooks/products/create",
+        "/api/webhooks/products/update",
+        "/api/webhooks/products/delete",
+        "/api/webhooks/",
+        "/api/variants/",
+        "/api/sync/"
+    }
+
+    # Apply security requirements to each endpoint individually
+    for path_item in openapi_schema.get("paths", {}).values():
+        for operation in path_item.values():
+            if isinstance(operation, dict) and "operationId" in operation:
+                # Get the actual path to determine if it's public
+                operation_path = None
+                for path, item in openapi_schema["paths"].items():
+                    if operation in item.values():
+                        operation_path = path
+                        break
+
+                # Don't add security to public paths
+                if operation_path not in public_paths:
+                    # OAuth initiate and status - API Key only (no merchant exists yet)
+                    if "oauth/initiate" in str(operation_path) or "oauth/status" in str(operation_path):
+                        operation["security"] = [{"ApiKeyAuth": []}]
+                    # Product/variant/sync endpoints - need both API Key and Merchant ID
+                    elif any(x in str(operation_path) for x in ["/api/products", "/api/variants", "/api/sync"]):
+                        operation["security"] = [{"ApiKeyAuth": [], "MerchantIdAuth": []}]
+                    # Webhook management endpoints - API Key only
+                    elif "webhooks/register" in str(operation_path) or "webhooks/list" in str(operation_path) or "webhooks/delete" in str(operation_path) or "webhooks/sync" in str(operation_path):
+                        operation["security"] = [{"ApiKeyAuth": []}]
+
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+app.openapi = custom_openapi
+
+# CORS configuration - Restrict to specific origins in production
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure this based on your needs
+    allow_origins=[
+        "http://localhost:3000",  # Local development
+        "http://localhost:8000",  # Local API
+        "https://shopify-sync-service-staging-vgcxyi5qqa-uc.a.run.app",  # Staging
+    ],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
+    allow_headers=["Content-Type", "X-API-Key", "X-Merchant-Id"],
 )
+
+
+# Global API Key Authentication Middleware
+@app.middleware("http")
+async def api_key_middleware(request: Request, call_next):
+    """
+    Global middleware to verify API key for all endpoints except:
+    - Health check endpoints (/, /health)
+    - API documentation (/docs, /redoc, /openapi.json)
+    - Shopify webhook callbacks (they use HMAC verification)
+    """
+    # List of paths that don't require API key authentication
+    public_paths = [
+        "/",
+        "/health",
+        "/docs",
+        "/redoc",
+        "/openapi.json",
+    ]
+
+    # Shopify webhook paths use HMAC verification instead of API key
+    webhook_paths = [
+        "/api/webhooks/products/create",
+        "/api/webhooks/products/update",
+        "/api/webhooks/products/delete",
+    ]
+
+    path = request.url.path
+
+    # Skip API key check for public and webhook paths
+    if path in public_paths or path in webhook_paths:
+        return await call_next(request)
+
+    # Verify API key for all other endpoints
+    api_key = request.headers.get("x-api-key")
+
+    if not api_key:
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Missing X-API-Key header"}
+        )
+
+    # Use constant-time comparison to prevent timing attacks
+    if not secrets.compare_digest(api_key, settings.API_KEY):
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Invalid API Key"}
+        )
+
+    # API key is valid, proceed with the request
+    response = await call_next(request)
+    return response
 
 # Include routers
 app.include_router(oauth.router)

@@ -1,8 +1,41 @@
-from fastapi import Header, HTTPException, Depends
+from fastapi import Header, HTTPException, Depends, Request
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
 from app.models import Merchant
+from app.config import settings
+import secrets
+
+
+async def verify_api_key(x_api_key: Optional[str] = Header(None)) -> bool:
+    """
+    Verify API Key for service-to-service authentication
+
+    Args:
+        x_api_key: API Key from X-API-Key header
+
+    Returns:
+        bool: True if valid
+
+    Raises:
+        HTTPException: If API key is missing or invalid
+    """
+    if not x_api_key:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing X-API-Key header"
+        )
+
+    expected_api_key = settings.API_KEY
+
+    # Use constant-time comparison to prevent timing attacks
+    if not secrets.compare_digest(x_api_key, expected_api_key):
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid API Key"
+        )
+
+    return True
 
 
 async def get_merchant_from_header(
@@ -11,6 +44,9 @@ async def get_merchant_from_header(
 ) -> Merchant:
     """
     Middleware to extract and validate merchant ID from request headers
+
+    Note: API Key authentication is handled globally by middleware.
+    This function validates the merchant-specific context for the request.
 
     Args:
         x_merchant_id: Merchant ID from X-Merchant-Id header
@@ -24,8 +60,8 @@ async def get_merchant_from_header(
     """
     if not x_merchant_id:
         raise HTTPException(
-            status_code=401,
-            detail="Missing X-Merchant-Id header"
+            status_code=400,
+            detail="Missing X-Merchant-Id header. Required for merchant-specific operations."
         )
 
     merchant = db.query(Merchant).filter(
@@ -36,7 +72,7 @@ async def get_merchant_from_header(
     if not merchant:
         raise HTTPException(
             status_code=404,
-            detail=f"Merchant not found or inactive: {x_merchant_id}"
+            detail="Merchant not found or inactive"
         )
 
     if not merchant.access_token:

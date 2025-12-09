@@ -8,6 +8,7 @@ from app.schemas import OAuthInitiate, MerchantResponse
 from app.services.shopify_oauth import ShopifyOAuth
 from app.services.webhook_manager import register_webhooks
 from app.services.product_sync import fetch_all_products_from_shopify
+from app.middleware.auth import get_merchant_from_header
 
 router = APIRouter(prefix="/api/oauth", tags=["OAuth"])
 shopify_oauth = ShopifyOAuth()
@@ -224,23 +225,15 @@ async def oauth_callback(
 
 @router.get("/status", response_model=MerchantResponse)
 async def check_oauth_status(
-    merchant_id: str = Query(..., description="Merchant ID to check"),
-    db: Session = Depends(get_db)
+    merchant: Merchant = Depends(get_merchant_from_header)
 ):
     """
     Check OAuth status for a merchant
 
-    Query Parameters:
-        - merchant_id: Merchant identifier
+    Headers:
+        - X-Merchant-Id: Merchant identifier (required)
+
+    Returns:
+        Merchant information including OAuth status, shop domain, and token scope
     """
-    merchant = db.query(Merchant).filter(
-        Merchant.merchant_id == merchant_id
-    ).first()
-
-    if not merchant:
-        raise HTTPException(
-            status_code=404,
-            detail="Merchant not found"
-        )
-
     return merchant
