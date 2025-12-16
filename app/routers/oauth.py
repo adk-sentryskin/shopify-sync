@@ -4,7 +4,7 @@ from typing import Dict
 from datetime import datetime, timezone
 from app.database import get_db
 from app.models import Merchant
-from app.schemas import OAuthInitiate, MerchantResponse
+from app.schemas import OAuthInitiate, MerchantResponse, OAuthComplete
 from app.services.shopify_oauth import ShopifyOAuth
 from app.services.webhook_manager import register_webhooks
 from app.services.product_sync import fetch_all_products_from_shopify
@@ -53,12 +53,37 @@ async def initial_product_sync_background(
         logger.error(f"[Initial Sync] Error during background sync: {str(e)}")
 
 
+@router.get("/config")
+async def get_oauth_config():
+    """
+    Get OAuth configuration for frontend to build authorization URL
+
+    Frontend can use this to construct the Shopify OAuth URL client-side.
+    """
+    from app.config import settings
+
+    return {
+        "client_id": settings.SHOPIFY_API_KEY,
+        "scopes": settings.SHOPIFY_SCOPES,
+        "redirect_uri": settings.OAUTH_REDIRECT_URL,
+        "instructions": {
+            "authorization_url_template": "https://{shop_domain}/admin/oauth/authorize?client_id={client_id}&scope={scopes}&redirect_uri={redirect_uri}&state={merchant_id}",
+            "example": f"https://mystore.myshopify.com/admin/oauth/authorize?client_id={settings.SHOPIFY_API_KEY}&scope={settings.SHOPIFY_SCOPES}&redirect_uri={settings.OAUTH_REDIRECT_URL}&state=merchant-123"
+        }
+    }
+
+
 @router.post("/initiate", response_model=Dict[str, str])
 async def initiate_oauth(
     oauth_data: OAuthInitiate,
     db: Session = Depends(get_db)
 ):
-    """Initiate OAuth flow for a merchant"""
+    """
+    Initiate OAuth flow for a merchant (Backend-driven approach)
+
+    Note: For frontend-driven OAuth, use GET /config to get OAuth settings,
+    then use POST /complete after Shopify redirects back.
+    """
     shop_domain = sanitize_shop_domain(oauth_data.shop_domain)
 
     # Check if merchant exists, create if not
@@ -180,6 +205,126 @@ async def oauth_callback(
 
     except Exception as e:
         db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"OAuth failed: {str(e)}"
+        )
+
+
+@router.post("/complete")
+async def complete_oauth(
+    oauth_data: OAuthComplete,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Complete OAuth flow from frontend
+
+    Frontend receives callback from Shopify with query parameters and sends them here.
+    This endpoint validates HMAC and exchanges the code for an access token.
+    """
+    shop_domain = sanitize_shop_domain(oauth_data.shop)
+
+    # Build params dict for HMAC verification
+    params = {
+        "code": oauth_data.code,
+        "shop": oauth_data.shop,
+        "state": oauth_data.merchant_id,
+        "hmac": oauth_data.hmac
+    }
+
+    if oauth_data.timestamp:
+        params["timestamp"] = oauth_data.timestamp
+
+        # Validate timestamp
+        try:
+            callback_timestamp = int(oauth_data.timestamp)
+            current_timestamp = int(datetime.now(timezone.utc).timestamp())
+            time_difference = abs(current_timestamp - callback_timestamp)
+
+            if time_difference > 300:
+                raise HTTPException(
+                    status_code=400,
+                    detail="OAuth callback timestamp expired (must be within 5 minutes)"
+                )
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid timestamp format"
+            )
+
+    if oauth_data.host:
+        params["host"] = oauth_data.host
+
+    logger.info(f"[OAuth Complete] Received request for shop: {shop_domain}, merchant: {oauth_data.merchant_id}")
+
+    # Verify HMAC
+    if not shopify_oauth.verify_hmac(params):
+        logger.error(f"[OAuth Complete] HMAC verification failed for shop: {shop_domain}")
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid HMAC signature"
+        )
+
+    logger.info(f"[OAuth Complete] HMAC verification successful for shop: {shop_domain}")
+
+    # Find or create merchant
+    merchant = db.query(Merchant).filter(
+        Merchant.merchant_id == oauth_data.merchant_id
+    ).first()
+
+    if not merchant:
+        merchant = Merchant(
+            merchant_id=oauth_data.merchant_id,
+            shop_domain=shop_domain
+        )
+        db.add(merchant)
+        db.flush()
+    else:
+        merchant.shop_domain = shop_domain
+
+    try:
+        # Exchange code for access token
+        token_data = await shopify_oauth.exchange_code_for_token(shop_domain, oauth_data.code)
+
+        merchant.access_token = token_data.get("access_token")
+        merchant.scope = token_data.get("scope")
+        merchant.is_active = 1
+
+        db.commit()
+
+        # Get shop info
+        shop_info = await shopify_oauth.get_shop_info(shop_domain, merchant.access_token)
+
+        # Register webhooks
+        webhook_results = await register_webhooks(shop_domain, merchant.access_token, db, merchant.id)
+
+        # Start initial product sync in background
+        background_tasks.add_task(
+            initial_product_sync_background,
+            merchant_id=merchant.id,
+            shop_domain=shop_domain,
+            access_token=merchant.access_token
+        )
+
+        logger.info(f"[OAuth Complete] Successfully completed OAuth for merchant: {oauth_data.merchant_id}")
+
+        return {
+            "message": "OAuth successful",
+            "merchant_id": merchant.merchant_id,
+            "shop_domain": shop_domain,
+            "shop_name": shop_info.get("shop", {}).get("name"),
+            "status": "authenticated",
+            "webhooks_registered": webhook_results,
+            "initial_product_sync": {
+                "status": "started",
+                "message": "Initial product sync is running in the background. This may take several minutes for large stores."
+            }
+        }
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"[OAuth Complete] Error: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"OAuth failed: {str(e)}"

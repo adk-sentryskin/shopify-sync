@@ -32,6 +32,16 @@ class OAuthCallback(BaseModel):
     state: Optional[str] = None
 
 
+class OAuthComplete(BaseModel):
+    """Schema for completing OAuth from frontend"""
+    code: str = Field(..., description="Authorization code from Shopify")
+    shop: str = Field(..., description="Shop domain")
+    merchant_id: str = Field(..., description="Merchant ID (from state parameter)")
+    hmac: str = Field(..., description="HMAC signature from Shopify")
+    timestamp: Optional[str] = Field(None, description="Timestamp from Shopify")
+    host: Optional[str] = Field(None, description="Host parameter from Shopify")
+
+
 class ProductBase(BaseModel):
     shopify_product_id: int
     title: Optional[str] = None
