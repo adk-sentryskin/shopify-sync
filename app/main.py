@@ -87,7 +87,6 @@ def custom_openapi():
 
     # Apply security to specific endpoints only (not globally)
     # Endpoints that should be PUBLIC (no lock icon):
-    # - OAuth callback: /api/oauth/callback (Shopify redirects here)
     # - Webhook receivers: /api/webhooks/products/* (use HMAC verification)
     # - Health/info endpoints: /, /health
     # - Documentation endpoints: /api/webhooks/, /api/variants/, /api/sync/
@@ -95,7 +94,6 @@ def custom_openapi():
     public_paths = {
         "/",
         "/health",
-        "/api/oauth/callback",  # Public - Shopify redirects here
         "/api/webhooks/products/create",
         "/api/webhooks/products/update",
         "/api/webhooks/products/delete",
@@ -117,8 +115,8 @@ def custom_openapi():
 
                 # Don't add security to public paths
                 if operation_path not in public_paths:
-                    # OAuth initiate and status - API Key only (no merchant exists yet)
-                    if "oauth/initiate" in str(operation_path) or "oauth/status" in str(operation_path):
+                    # OAuth endpoints - API Key only (no merchant exists yet during OAuth flow)
+                    if "oauth" in str(operation_path):
                         operation["security"] = [{"ApiKeyAuth": []}]
                     # Product/variant/sync endpoints - need both API Key and Merchant ID
                     elif any(x in str(operation_path) for x in ["/api/products", "/api/variants", "/api/sync"]):
