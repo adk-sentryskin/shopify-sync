@@ -21,15 +21,11 @@ class MerchantResponse(MerchantBase):
         from_attributes = True
 
 
-class OAuthInitiate(BaseModel):
+class OAuthGenerateURL(BaseModel):
+    """Schema for generating OAuth authorization URL"""
     shop_domain: str = Field(..., description="Shopify shop domain (e.g., mystore.myshopify.com)")
     merchant_id: str = Field(..., description="Unique merchant identifier")
-
-
-class OAuthCallback(BaseModel):
-    code: str
-    shop: str
-    state: Optional[str] = None
+    redirect_uri: str = Field(..., description="Frontend callback URL where Shopify will redirect")
 
 
 class OAuthComplete(BaseModel):
