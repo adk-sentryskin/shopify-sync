@@ -135,11 +135,7 @@ app.openapi = custom_openapi
 # CORS configuration - Restrict to specific origins in production
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",  # Local development
-        "http://localhost:8000",  # Local API
-        "https://shopify-sync-service-staging-vgcxyi5qqa-uc.a.run.app",  # Staging
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
     allow_headers=["Content-Type", "X-API-Key", "X-Merchant-Id"],
