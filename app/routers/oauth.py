@@ -99,33 +99,31 @@ async def complete_oauth(
     """
     shop_domain = sanitize_shop_domain(oauth_data.shop)
 
+    # Validate timestamp (required for replay attack prevention)
+    try:
+        callback_timestamp = int(oauth_data.timestamp)
+        current_timestamp = int(datetime.now(timezone.utc).timestamp())
+        time_difference = abs(current_timestamp - callback_timestamp)
+
+        if time_difference > 300:
+            raise HTTPException(
+                status_code=400,
+                detail="OAuth callback timestamp expired (must be within 5 minutes)"
+            )
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid timestamp format"
+        )
+
     # Build params dict for HMAC verification
     params = {
         "code": oauth_data.code,
         "shop": oauth_data.shop,
         "state": oauth_data.merchant_id,
-        "hmac": oauth_data.hmac
+        "hmac": oauth_data.hmac,
+        "timestamp": oauth_data.timestamp
     }
-
-    if oauth_data.timestamp:
-        params["timestamp"] = oauth_data.timestamp
-
-        # Validate timestamp
-        try:
-            callback_timestamp = int(oauth_data.timestamp)
-            current_timestamp = int(datetime.now(timezone.utc).timestamp())
-            time_difference = abs(current_timestamp - callback_timestamp)
-
-            if time_difference > 300:
-                raise HTTPException(
-                    status_code=400,
-                    detail="OAuth callback timestamp expired (must be within 5 minutes)"
-                )
-        except ValueError:
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid timestamp format"
-            )
 
     if oauth_data.host:
         params["host"] = oauth_data.host
@@ -147,6 +145,17 @@ async def complete_oauth(
         Merchant.merchant_id == oauth_data.merchant_id
     ).first()
 
+    # Check for duplicate OAuth completion (prevent replay attacks)
+    if merchant and merchant.is_active == 1 and merchant.access_token:
+        if merchant.updated_at:
+            time_since_last_oauth = (datetime.now(timezone.utc) - merchant.updated_at.replace(tzinfo=timezone.utc)).total_seconds()
+            if time_since_last_oauth < 60:  # Less than 60 seconds ago
+                logger.warning(f"[OAuth Complete] Duplicate OAuth attempt detected for merchant {oauth_data.merchant_id} (last completed {time_since_last_oauth:.1f}s ago)")
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"OAuth was recently completed for this merchant. Please wait before retrying."
+                )
+
     if not merchant:
         merchant = Merchant(
             merchant_id=oauth_data.merchant_id,
@@ -159,19 +168,48 @@ async def complete_oauth(
 
     try:
         # Exchange code for access token
-        token_data = await shopify_oauth.exchange_code_for_token(shop_domain, oauth_data.code)
+        try:
+            token_data = await shopify_oauth.exchange_code_for_token(shop_domain, oauth_data.code)
+        except Exception as token_error:
+            db.rollback()
+            error_msg = str(token_error)
+            logger.error(f"[OAuth Complete] Token exchange failed: {error_msg}")
 
+            # Detect duplicate/invalid code errors from Shopify
+            if "400" in error_msg or "invalid" in error_msg.lower() or "already" in error_msg.lower():
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid or already used authorization code. Please restart the OAuth flow."
+                )
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to exchange authorization code with Shopify: {error_msg}"
+            )
+
+        # Update merchant with new credentials
         merchant.access_token = token_data.get("access_token")
         merchant.scope = token_data.get("scope")
         merchant.is_active = 1
 
+        # Commit the merchant update before proceeding with other operations
         db.commit()
+        db.refresh(merchant)
+
+        logger.info(f"[OAuth Complete] Access token obtained for merchant: {oauth_data.merchant_id}")
 
         # Get shop info
-        shop_info = await shopify_oauth.get_shop_info(shop_domain, merchant.access_token)
+        try:
+            shop_info = await shopify_oauth.get_shop_info(shop_domain, merchant.access_token)
+        except Exception as shop_error:
+            logger.error(f"[OAuth Complete] Failed to fetch shop info: {str(shop_error)}")
+            shop_info = {"shop": {"name": shop_domain}}  # Fallback
 
-        # Register webhooks
-        webhook_results = await register_webhooks(shop_domain, merchant.access_token, db, merchant.id)
+        # Register webhooks (non-blocking - log errors but don't fail OAuth)
+        try:
+            webhook_results = await register_webhooks(shop_domain, merchant.access_token, db, merchant.id)
+        except Exception as webhook_error:
+            logger.error(f"[OAuth Complete] Webhook registration failed: {str(webhook_error)}")
+            webhook_results = {"error": "Webhook registration failed, will retry later"}
 
         # Start initial product sync in background
         background_tasks.add_task(
@@ -196,9 +234,12 @@ async def complete_oauth(
             }
         }
 
+    except HTTPException:
+        # Re-raise HTTP exceptions (already properly formatted)
+        raise
     except Exception as e:
         db.rollback()
-        logger.error(f"[OAuth Complete] Error: {str(e)}")
+        logger.error(f"[OAuth Complete] Unexpected error: {str(e)}")
         raise HTTPException(
             status_code=500,
             detail=f"OAuth failed: {str(e)}"

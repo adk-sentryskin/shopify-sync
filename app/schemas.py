@@ -34,7 +34,7 @@ class OAuthComplete(BaseModel):
     shop: str = Field(..., description="Shop domain")
     merchant_id: str = Field(..., description="Merchant ID (from state parameter)")
     hmac: str = Field(..., description="HMAC signature from Shopify")
-    timestamp: Optional[str] = Field(None, description="Timestamp from Shopify")
+    timestamp: str = Field(..., description="Timestamp from Shopify (required for replay attack prevention)")
     host: Optional[str] = Field(None, description="Host parameter from Shopify")
 
 
