@@ -174,6 +174,10 @@ async def api_key_middleware(request: Request, call_next):
 
     path = request.url.path
 
+    # Skip API key check for OPTIONS requests (CORS preflight)
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
     # Skip API key check for public and webhook paths
     if path in public_paths or path in webhook_paths:
         return await call_next(request)
