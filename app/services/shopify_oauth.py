@@ -1,10 +1,13 @@
 import hmac
 import hashlib
 import httpx
-from urllib.parse import urlencode
+import logging
+from urllib.parse import urlencode, quote
 from typing import Dict, Optional
 from app.config import settings
 from app.utils.helpers import sanitize_shop_domain
+
+logger = logging.getLogger(__name__)
 
 
 class ShopifyOAuth:
@@ -51,6 +54,7 @@ class ShopifyOAuth:
             True if HMAC is valid, False otherwise
         """
         if "hmac" not in params:
+            logger.warning("[HMAC] No HMAC parameter found in request")
             return False
 
         hmac_to_verify = params["hmac"]
@@ -59,11 +63,14 @@ class ShopifyOAuth:
         params_copy = params.copy()
         params_copy.pop("hmac", None)
 
-        # Sort and encode parameters
+        # Sort and encode parameters (Shopify requires URL encoding of values)
         encoded_params = "&".join(
-            f"{key}={value}"
+            f"{key}={quote(str(value), safe='')}"
             for key, value in sorted(params_copy.items())
         )
+
+        logger.debug(f"[HMAC] Encoded params for verification: {encoded_params[:100]}...")
+        logger.debug(f"[HMAC] Received HMAC: {hmac_to_verify[:10]}...")
 
         # Calculate HMAC
         computed_hmac = hmac.new(
@@ -72,7 +79,12 @@ class ShopifyOAuth:
             hashlib.sha256
         ).hexdigest()
 
-        return hmac.compare_digest(computed_hmac, hmac_to_verify)
+        logger.debug(f"[HMAC] Computed HMAC: {computed_hmac[:10]}...")
+
+        is_valid = hmac.compare_digest(computed_hmac, hmac_to_verify)
+        logger.info(f"[HMAC] Verification result: {'VALID' if is_valid else 'INVALID'}")
+
+        return is_valid
 
     async def exchange_code_for_token(self, shop_domain: str, code: str) -> Dict:
         """

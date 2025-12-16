@@ -100,6 +100,9 @@ async def oauth_callback(
     """OAuth callback endpoint - Shopify redirects here after authorization"""
     params = dict(request.query_params)
 
+    logger.info(f"[OAuth Callback] Received params: {list(params.keys())}")
+    logger.debug(f"[OAuth Callback] Full params (excluding sensitive): shop={params.get('shop')}, state={params.get('state')}, has_hmac={('hmac' in params)}, has_code={('code' in params)}")
+
     if "timestamp" in params:
         try:
             callback_timestamp = int(params["timestamp"])
@@ -118,10 +121,13 @@ async def oauth_callback(
             )
 
     if not shopify_oauth.verify_hmac(params):
+        logger.error(f"[OAuth Callback] HMAC verification failed for shop: {params.get('shop')}")
         raise HTTPException(
             status_code=400,
             detail="Invalid HMAC signature"
         )
+
+    logger.info(f"[OAuth Callback] HMAC verification successful for shop: {params.get('shop')}")
 
     if not state:
         raise HTTPException(
