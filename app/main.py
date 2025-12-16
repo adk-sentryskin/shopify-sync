@@ -163,6 +163,7 @@ async def api_key_middleware(request: Request, call_next):
         "/docs",
         "/redoc",
         "/openapi.json",
+        "/api/oauth/callback",  # Shopify redirects here
     ]
 
     # Shopify webhook paths use HMAC verification instead of API key
