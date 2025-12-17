@@ -142,6 +142,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["Content-Type", "X-API-Key", "X-Merchant-Id", "Authorization", "Accept"],
     expose_headers=["Content-Type"],
+    max_age=600,  # Cache preflight requests for 10 minutes
 )
 
 
@@ -172,9 +173,11 @@ async def api_key_middleware(request: Request, call_next):
 
     path = request.url.path
 
-    # Skip API key check for OPTIONS requests (CORS preflight)
+    # Handle OPTIONS requests (CORS preflight) immediately
+    # Skip authentication and pass through to let CORS middleware handle it
     if request.method == "OPTIONS":
-        return await call_next(request)
+        response = await call_next(request)
+        return response
 
     # Skip API key check for public and webhook paths
     if path in public_paths or path in webhook_paths:

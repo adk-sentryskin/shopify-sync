@@ -53,6 +53,12 @@ async def initial_product_sync_background(
         logger.error(f"[Initial Sync] Error during background sync: {str(e)}")
 
 
+@router.options("/generate-url")
+async def generate_url_preflight():
+    """Handle CORS preflight for generate URL endpoint"""
+    return {}
+
+
 @router.post("/generate-url", response_model=Dict[str, str])
 async def generate_oauth_url(oauth_data: OAuthGenerateURL):
     """
@@ -83,6 +89,12 @@ async def generate_oauth_url(oauth_data: OAuthGenerateURL):
         "merchant_id": oauth_data.merchant_id,
         "shop_domain": shop_domain
     }
+
+
+@router.options("/complete")
+async def complete_oauth_preflight():
+    """Handle CORS preflight for complete OAuth endpoint"""
+    return {}
 
 
 @router.post("/complete")
@@ -244,6 +256,12 @@ async def complete_oauth(
             status_code=500,
             detail=f"OAuth failed: {str(e)}"
         )
+
+
+@router.options("/status")
+async def oauth_status_preflight():
+    """Handle CORS preflight for OAuth status endpoint"""
+    return {}
 
 
 @router.get("/status", response_model=MerchantResponse)
