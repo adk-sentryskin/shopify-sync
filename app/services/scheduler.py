@@ -12,7 +12,7 @@ from typing import Dict, List
 import asyncio
 from sqlalchemy.orm import Session
 from app.database import SessionLocal
-from app.models import Merchant
+from app.models import ShopifyStore
 from app.services.product_reconciliation import reconcile_products
 import logging
 
@@ -35,17 +35,17 @@ async def run_daily_reconciliation_for_merchant(merchant_id: int):
 
     try:
         # Get merchant from database
-        merchant = db.query(Merchant).filter(
-            Merchant.id == merchant_id,
-            Merchant.is_active == 1
+        merchant = db.query(ShopifyStore).filter(
+            ShopifyStore.id == merchant_id,
+            ShopifyStore.is_active == 1
         ).first()
 
         if not merchant:
-            logger.warning(f"[Scheduler] Merchant {merchant_id} not found or inactive")
+            logger.warning(f"[Scheduler] ShopifyStore {merchant_id} not found or inactive")
             return
 
         if not merchant.access_token:
-            logger.warning(f"[Scheduler] Merchant {merchant.merchant_id} has no access token")
+            logger.warning(f"[Scheduler] ShopifyStore {merchant.merchant_id} has no access token")
             return
 
         logger.info(f"[Scheduler] Starting reconciliation for merchant {merchant.merchant_id} ({merchant.shop_domain})")
@@ -93,8 +93,8 @@ async def run_daily_reconciliation_for_all_merchants():
 
     try:
         # Get all active merchants with access tokens
-        merchants = db.query(Merchant).filter(
-            Merchant.is_active == 1
+        merchants = db.query(ShopifyStore).filter(
+            ShopifyStore.is_active == 1
         ).all()
 
         if not merchants:

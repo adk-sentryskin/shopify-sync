@@ -4,7 +4,7 @@ from typing import Optional
 from datetime import datetime, timezone
 import json
 from app.database import get_db
-from app.models import Merchant, Product
+from app.models import ShopifyStore, Product
 from app.services.product_sync import upsert_product
 from app.utils.webhook_verification import verify_webhook, extract_shop_domain, extract_webhook_topic
 from app.services.webhook_manager import register_webhooks, list_webhooks, delete_webhook, sync_webhooks
@@ -60,15 +60,15 @@ async def product_create_webhook(
         product_data = json.loads(webhook_data["body"])
 
         # Find merchant by shop domain
-        merchant = db.query(Merchant).filter(
-            Merchant.shop_domain == shop_domain,
-            Merchant.is_active == 1
+        merchant = db.query(ShopifyStore).filter(
+            ShopifyStore.shop_domain == shop_domain,
+            ShopifyStore.is_active == 1
         ).first()
 
         if not merchant:
             raise HTTPException(
                 status_code=404,
-                detail=f"Merchant not found for shop: {shop_domain}"
+                detail=f"ShopifyStore not found for shop: {shop_domain}"
             )
 
         # Sync the new product
@@ -109,15 +109,15 @@ async def product_update_webhook(
         product_data = json.loads(webhook_data["body"])
 
         # Find merchant by shop domain
-        merchant = db.query(Merchant).filter(
-            Merchant.shop_domain == shop_domain,
-            Merchant.is_active == 1
+        merchant = db.query(ShopifyStore).filter(
+            ShopifyStore.shop_domain == shop_domain,
+            ShopifyStore.is_active == 1
         ).first()
 
         if not merchant:
             raise HTTPException(
                 status_code=404,
-                detail=f"Merchant not found for shop: {shop_domain}"
+                detail=f"ShopifyStore not found for shop: {shop_domain}"
             )
 
         # Sync the updated product
@@ -159,15 +159,15 @@ async def product_delete_webhook(
         shopify_product_id = product_data.get('id')
 
         # Find merchant by shop domain
-        merchant = db.query(Merchant).filter(
-            Merchant.shop_domain == shop_domain,
-            Merchant.is_active == 1
+        merchant = db.query(ShopifyStore).filter(
+            ShopifyStore.shop_domain == shop_domain,
+            ShopifyStore.is_active == 1
         ).first()
 
         if not merchant:
             raise HTTPException(
                 status_code=404,
-                detail=f"Merchant not found for shop: {shop_domain}"
+                detail=f"ShopifyStore not found for shop: {shop_domain}"
             )
 
         # Find and soft delete the product
@@ -238,7 +238,7 @@ async def webhook_info():
 
 @router.post("/register")
 async def register_webhooks_endpoint(
-    merchant_id: str = Query(..., description="Merchant ID to register webhooks for"),
+    merchant_id: str = Query(..., description="ShopifyStore ID to register webhooks for"),
     db: Session = Depends(get_db)
 ):
     """
@@ -253,21 +253,21 @@ async def register_webhooks_endpoint(
     Returns:
         List of webhook registration results
     """
-    merchant = db.query(Merchant).filter(
-        Merchant.merchant_id == merchant_id,
-        Merchant.is_active == 1
+    merchant = db.query(ShopifyStore).filter(
+        ShopifyStore.merchant_id == merchant_id,
+        ShopifyStore.is_active == 1
     ).first()
 
     if not merchant:
         raise HTTPException(
             status_code=404,
-            detail="Merchant not found or not active"
+            detail="ShopifyStore not found or not active"
         )
 
     if not merchant.access_token:
         raise HTTPException(
             status_code=400,
-            detail="Merchant has no access token. Complete OAuth first."
+            detail="ShopifyStore has no access token. Complete OAuth first."
         )
 
     try:
@@ -288,7 +288,7 @@ async def register_webhooks_endpoint(
 
 @router.get("/list")
 async def list_webhooks_endpoint(
-    merchant_id: str = Query(..., description="Merchant ID to list webhooks for"),
+    merchant_id: str = Query(..., description="ShopifyStore ID to list webhooks for"),
     db: Session = Depends(get_db)
 ):
     """
@@ -300,21 +300,21 @@ async def list_webhooks_endpoint(
     Returns:
         List of all webhooks currently registered in Shopify for this merchant
     """
-    merchant = db.query(Merchant).filter(
-        Merchant.merchant_id == merchant_id,
-        Merchant.is_active == 1
+    merchant = db.query(ShopifyStore).filter(
+        ShopifyStore.merchant_id == merchant_id,
+        ShopifyStore.is_active == 1
     ).first()
 
     if not merchant:
         raise HTTPException(
             status_code=404,
-            detail="Merchant not found or not active"
+            detail="ShopifyStore not found or not active"
         )
 
     if not merchant.access_token:
         raise HTTPException(
             status_code=400,
-            detail="Merchant has no access token. Complete OAuth first."
+            detail="ShopifyStore has no access token. Complete OAuth first."
         )
 
     try:
@@ -337,7 +337,7 @@ async def list_webhooks_endpoint(
 @router.delete("/delete/{webhook_id}")
 async def delete_webhook_endpoint(
     webhook_id: int,
-    merchant_id: str = Query(..., description="Merchant ID that owns the webhook"),
+    merchant_id: str = Query(..., description="ShopifyStore ID that owns the webhook"),
     db: Session = Depends(get_db)
 ):
     """
@@ -352,21 +352,21 @@ async def delete_webhook_endpoint(
     Returns:
         Deletion confirmation
     """
-    merchant = db.query(Merchant).filter(
-        Merchant.merchant_id == merchant_id,
-        Merchant.is_active == 1
+    merchant = db.query(ShopifyStore).filter(
+        ShopifyStore.merchant_id == merchant_id,
+        ShopifyStore.is_active == 1
     ).first()
 
     if not merchant:
         raise HTTPException(
             status_code=404,
-            detail="Merchant not found or not active"
+            detail="ShopifyStore not found or not active"
         )
 
     if not merchant.access_token:
         raise HTTPException(
             status_code=400,
-            detail="Merchant has no access token. Complete OAuth first."
+            detail="ShopifyStore has no access token. Complete OAuth first."
         )
 
     try:
@@ -387,7 +387,7 @@ async def delete_webhook_endpoint(
 
 @router.post("/sync")
 async def sync_webhooks_endpoint(
-    merchant_id: str = Query(..., description="Merchant ID to sync webhooks for"),
+    merchant_id: str = Query(..., description="ShopifyStore ID to sync webhooks for"),
     db: Session = Depends(get_db)
 ):
     """
@@ -403,21 +403,21 @@ async def sync_webhooks_endpoint(
     Returns:
         Sync results with counts
     """
-    merchant = db.query(Merchant).filter(
-        Merchant.merchant_id == merchant_id,
-        Merchant.is_active == 1
+    merchant = db.query(ShopifyStore).filter(
+        ShopifyStore.merchant_id == merchant_id,
+        ShopifyStore.is_active == 1
     ).first()
 
     if not merchant:
         raise HTTPException(
             status_code=404,
-            detail="Merchant not found or not active"
+            detail="ShopifyStore not found or not active"
         )
 
     if not merchant.access_token:
         raise HTTPException(
             status_code=400,
-            detail="Merchant has no access token. Complete OAuth first."
+            detail="ShopifyStore has no access token. Complete OAuth first."
         )
 
     try:

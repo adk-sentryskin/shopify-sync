@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import Dict, Optional
 from app.database import get_db
-from app.models import Merchant, Product
+from app.models import ShopifyStore, Product
 from app.middleware.auth import get_merchant_from_header
 from app.services.product_reconciliation import reconcile_products, force_full_resync
 from app.services.scheduler import (
@@ -20,7 +20,7 @@ async def reconcile_products_endpoint(
         False,
         description="Mark products as deleted if they don't exist in Shopify"
     ),
-    merchant: Merchant = Depends(get_merchant_from_header),
+    merchant: ShopifyStore = Depends(get_merchant_from_header),
     db: Session = Depends(get_db)
 ):
     """
@@ -34,7 +34,7 @@ async def reconcile_products_endpoint(
     This is a safety net for webhook failures or extended downtime.
 
     Headers:
-        - X-Merchant-Id: Merchant identifier (required)
+        - X-ShopifyStore-Id: ShopifyStore identifier (required)
 
     Query Parameters:
         - mark_deleted: If True, marks products as deleted if they don't exist in Shopify (default: False)
@@ -50,7 +50,7 @@ async def reconcile_products_endpoint(
     if not merchant.access_token:
         raise HTTPException(
             status_code=403,
-            detail="Merchant has not completed OAuth. Please authenticate first."
+            detail="ShopifyStore has not completed OAuth. Please authenticate first."
         )
 
     try:
@@ -77,7 +77,7 @@ async def reconcile_products_endpoint(
 
 @router.post("/force-resync")
 async def force_full_resync_endpoint(
-    merchant: Merchant = Depends(get_merchant_from_header),
+    merchant: ShopifyStore = Depends(get_merchant_from_header),
     db: Session = Depends(get_db)
 ):
     """
@@ -93,7 +93,7 @@ async def force_full_resync_endpoint(
     - When webhooks have been failing for a long time
 
     Headers:
-        - X-Merchant-Id: Merchant identifier (required)
+        - X-ShopifyStore-Id: ShopifyStore identifier (required)
 
     Returns:
         Sync statistics including:
@@ -104,7 +104,7 @@ async def force_full_resync_endpoint(
     if not merchant.access_token:
         raise HTTPException(
             status_code=403,
-            detail="Merchant has not completed OAuth. Please authenticate first."
+            detail="ShopifyStore has not completed OAuth. Please authenticate first."
         )
 
     try:
@@ -130,7 +130,7 @@ async def force_full_resync_endpoint(
 
 @router.get("/status")
 async def get_sync_status(
-    merchant: Merchant = Depends(get_merchant_from_header),
+    merchant: ShopifyStore = Depends(get_merchant_from_header),
     db: Session = Depends(get_db)
 ):
     """
@@ -143,7 +143,7 @@ async def get_sync_status(
     - Products by status (active, draft, archived)
 
     Headers:
-        - X-Merchant-Id: Merchant identifier (required)
+        - X-ShopifyStore-Id: ShopifyStore identifier (required)
 
     Returns:
         Sync status statistics
@@ -256,7 +256,7 @@ async def sync_info():
         },
         "authentication": {
             "required": True,
-            "header": "X-Merchant-Id"
+            "header": "X-ShopifyStore-Id"
         }
     }
 
@@ -308,15 +308,15 @@ async def trigger_manual_reconciliation_endpoint(
             from app.database import SessionLocal
             db = SessionLocal()
             try:
-                merchant = db.query(Merchant).filter(
-                    Merchant.merchant_id == merchant_id,
-                    Merchant.is_active == 1
+                merchant = db.query(ShopifyStore).filter(
+                    ShopifyStore.merchant_id == merchant_id,
+                    ShopifyStore.is_active == 1
                 ).first()
 
                 if not merchant:
                     raise HTTPException(
                         status_code=404,
-                        detail=f"Merchant {merchant_id} not found or inactive"
+                        detail=f"ShopifyStore {merchant_id} not found or inactive"
                     )
 
                 merchant_db_id = merchant.id

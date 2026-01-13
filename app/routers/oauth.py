@@ -3,8 +3,8 @@ from sqlalchemy.orm import Session
 from typing import Dict
 from datetime import datetime, timezone
 from app.database import get_db
-from app.models import Merchant
-from app.schemas import OAuthGenerateURL, MerchantResponse, OAuthComplete
+from app.models import ShopifyStore
+from app.schemas import OAuthGenerateURL, ShopifyStoreResponse, OAuthComplete
 from app.services.shopify_oauth import ShopifyOAuth
 from app.services.webhook_manager import register_webhooks
 from app.services.product_sync import fetch_all_products_from_shopify
@@ -29,10 +29,10 @@ async def initial_product_sync_background(
         db = SessionLocal()
 
         try:
-            merchant = db.query(Merchant).filter(Merchant.id == merchant_id).first()
+            merchant = db.query(ShopifyStore).filter(ShopifyStore.id == merchant_id).first()
 
             if not merchant:
-                logger.warning(f"[Initial Sync] Merchant {merchant_id} not found")
+                logger.warning(f"[Initial Sync] ShopifyStore {merchant_id} not found")
                 return
 
             logger.info(f"[Initial Sync] Starting bulk product sync for merchant {merchant.merchant_id}")
@@ -153,8 +153,8 @@ async def complete_oauth(
     logger.info(f"[OAuth Complete] HMAC verification successful for shop: {shop_domain}")
 
     # Find or create merchant
-    merchant = db.query(Merchant).filter(
-        Merchant.merchant_id == oauth_data.merchant_id
+    merchant = db.query(ShopifyStore).filter(
+        ShopifyStore.merchant_id == oauth_data.merchant_id
     ).first()
 
     # Check for duplicate OAuth completion (prevent replay attacks)
@@ -169,7 +169,7 @@ async def complete_oauth(
                 )
 
     if not merchant:
-        merchant = Merchant(
+        merchant = ShopifyStore(
             merchant_id=oauth_data.merchant_id,
             shop_domain=shop_domain
         )
@@ -264,9 +264,9 @@ async def oauth_status_preflight():
     return {}
 
 
-@router.get("/status", response_model=MerchantResponse)
+@router.get("/status", response_model=ShopifyStoreResponse)
 async def check_oauth_status(
-    merchant: Merchant = Depends(get_merchant_from_header)
+    merchant: ShopifyStore = Depends(get_merchant_from_header)
 ):
     """Check OAuth status for a merchant"""
     return merchant

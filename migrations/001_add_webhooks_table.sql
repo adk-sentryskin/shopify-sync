@@ -4,7 +4,7 @@
 
 CREATE TABLE IF NOT EXISTS shopify_sync.webhooks (
     id SERIAL PRIMARY KEY,
-    merchant_id INTEGER NOT NULL REFERENCES shopify_sync.merchants(id) ON DELETE CASCADE,
+    merchant_id INTEGER NOT NULL REFERENCES shopify_sync.shopify_stores(id) ON DELETE CASCADE,
     shopify_webhook_id BIGINT NOT NULL UNIQUE,
     topic VARCHAR(100) NOT NULL,
     address VARCHAR(500) NOT NULL,

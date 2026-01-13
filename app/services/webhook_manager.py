@@ -3,7 +3,7 @@ from typing import List, Dict, Optional
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from app.config import settings
-from app.models import Webhook, Merchant
+from app.models import Webhook, ShopifyStore
 from app.utils.helpers import sanitize_shop_domain
 
 
@@ -29,7 +29,7 @@ WEBHOOK_CONFIG = [
 async def register_webhooks(shop_domain: str, access_token: str, db: Session, merchant_id: int) -> List[Dict]:
     """
     Register webhooks for a shop after OAuth installation
-    
+
     Check local database first to avoid unnecessary API calls,
     then sync with Shopify and save webhook IDs for tracking.
 
@@ -37,12 +37,21 @@ async def register_webhooks(shop_domain: str, access_token: str, db: Session, me
         shop_domain: Shopify shop domain (e.g., mystore.myshopify.com)
         access_token: OAuth access token for the shop
         db: Database session for tracking webhooks
-        merchant_id: Merchant ID for associating webhooks
+        merchant_id: ShopifyStore ID (integer) for associating webhooks
 
     Returns:
         List of results for each webhook (created/updated/failed)
     """
     results = []
+
+    # Get the shopify store to fetch merchant_id string
+    from app.models import ShopifyStore
+    store = db.query(ShopifyStore).filter(ShopifyStore.id == merchant_id).first()
+    if not store:
+        raise ValueError(f"ShopifyStore with id {merchant_id} not found")
+
+    store_id = merchant_id  # FK to shopify_stores
+    tenant_id = store.merchant_id  # VARCHAR merchant identifier
 
     # Get the app URL from settings
     app_url = getattr(settings, 'APP_URL', settings.OAUTH_REDIRECT_URL.rsplit('/api/', 1)[0])
@@ -57,7 +66,7 @@ async def register_webhooks(shop_domain: str, access_token: str, db: Session, me
 
             # Check database first
             db_webhook = db.query(Webhook).filter(
-                Webhook.merchant_id == merchant_id,
+                Webhook.store_id == store_id,
                 Webhook.topic == webhook["topic"],
                 Webhook.is_active == 1
             ).first()
@@ -120,7 +129,8 @@ async def register_webhooks(shop_domain: str, access_token: str, db: Session, me
                 if existing:
                     # Exists in Shopify but not in DB - save to DB
                     new_webhook = Webhook(
-                        merchant_id=merchant_id,
+                        store_id=store_id,
+                        merchant_id=tenant_id,
                         shopify_webhook_id=existing["id"],
                         topic=webhook["topic"],
                         address=existing["address"],
@@ -153,7 +163,8 @@ async def register_webhooks(shop_domain: str, access_token: str, db: Session, me
 
                     # Save to database
                     new_webhook = Webhook(
-                        merchant_id=merchant_id,
+                        store_id=store_id,
+                        merchant_id=tenant_id,
                         shopify_webhook_id=shopify_webhook_id,
                         topic=webhook["topic"],
                         address=webhook["address"],
@@ -371,18 +382,27 @@ async def sync_webhooks(shop_domain: str, access_token: str, db: Session, mercha
         shop_domain: Shopify shop domain
         access_token: OAuth access token
         db: Database session
-        merchant_id: Merchant ID
+        merchant_id: ShopifyStore ID (integer)
 
     Returns:
         Sync results with counts of created, deleted, and synced webhooks
     """
+    # Get the shopify store to fetch merchant_id string
+    from app.models import ShopifyStore
+    store = db.query(ShopifyStore).filter(ShopifyStore.id == merchant_id).first()
+    if not store:
+        raise ValueError(f"ShopifyStore with id {merchant_id} not found")
+
+    store_id = merchant_id  # FK to shopify_stores
+    tenant_id = store.merchant_id  # VARCHAR merchant identifier
+
     # Get all webhooks from Shopify
     shopify_webhooks = await list_webhooks(shop_domain, access_token)
     shopify_webhook_ids = {w["id"] for w in shopify_webhooks}
 
     # Get all active webhooks from database
     db_webhooks = db.query(Webhook).filter(
-        Webhook.merchant_id == merchant_id,
+        Webhook.store_id == store_id,
         Webhook.is_active == 1
     ).all()
 
@@ -400,7 +420,8 @@ async def sync_webhooks(shop_domain: str, access_token: str, db: Session, mercha
     for shopify_webhook in shopify_webhooks:
         if shopify_webhook["id"] not in db_webhook_ids:
             new_webhook = Webhook(
-                merchant_id=merchant_id,
+                store_id=store_id,
+                merchant_id=tenant_id,
                 shopify_webhook_id=shopify_webhook["id"],
                 topic=shopify_webhook["topic"],
                 address=shopify_webhook["address"],

@@ -6,7 +6,7 @@ from datetime import datetime
 import httpx
 import time
 import logging
-from app.models import Product, Merchant
+from app.models import Product, ShopifyStore
 from app.config import settings
 from app.utils.helpers import sanitize_shop_domain
 
@@ -37,10 +37,15 @@ def parse_shopify_product(product_data: dict) -> dict:
     }
 
 
-def upsert_product(db: Session, merchant: Merchant, product_data: dict) -> Product:
+def upsert_product(db: Session, merchant: ShopifyStore, product_data: dict) -> Product:
     """Insert or update a single product in the database"""
     parsed_data = parse_shopify_product(product_data)
-    parsed_data['merchant_id'] = merchant.id
+
+    # Set FK to shopify_stores table
+    parsed_data['store_id'] = merchant.id
+
+    # Set denormalized merchant_id for fast multi-tenant queries
+    parsed_data['merchant_id'] = merchant.merchant_id
 
     stmt = insert(Product).values(**parsed_data)
     stmt = stmt.on_conflict_do_update(
@@ -70,7 +75,7 @@ def upsert_product(db: Session, merchant: Merchant, product_data: dict) -> Produ
     return product
 
 
-def sync_products(db: Session, merchant: Merchant, products_data: List[dict]) -> Dict:
+def sync_products(db: Session, merchant: ShopifyStore, products_data: List[dict]) -> Dict:
     """Bulk sync multiple products to the database"""
     stats = {
         'synced_count': 0,
@@ -102,7 +107,7 @@ def sync_products(db: Session, merchant: Merchant, products_data: List[dict]) ->
     return stats
 
 
-def sync_single_product(db: Session, merchant: Merchant, product_data: dict) -> Dict:
+def sync_single_product(db: Session, merchant: ShopifyStore, product_data: dict) -> Dict:
     """Sync a single product and return sync status"""
     if 'product' in product_data:
         product_data = product_data['product']
@@ -133,7 +138,7 @@ def sync_single_product(db: Session, merchant: Merchant, product_data: dict) -> 
 
 async def fetch_all_products_from_shopify(
     db: Session,
-    merchant: Merchant,
+    merchant: ShopifyStore,
     shop_domain: str,
     access_token: str
 ) -> Dict:
@@ -256,10 +261,10 @@ def get_total_inventory(product: Product) -> int:
     return sum(v.get('inventory_quantity', 0) for v in variants)
 
 
-def search_products_by_sku(db: Session, merchant: Merchant, sku: str) -> List[Product]:
+def search_products_by_sku(db: Session, merchant: ShopifyStore, sku: str) -> List[Product]:
     """Find products that have a variant with the specified SKU"""
     products = db.query(Product).filter(
-        Product.merchant_id == merchant.id,
+        Product.merchant_id == merchant.merchant_id,
         Product.is_deleted == 0
     ).all()
 
@@ -274,12 +279,12 @@ def search_products_by_sku(db: Session, merchant: Merchant, sku: str) -> List[Pr
 
 def find_low_inventory_products(
     db: Session,
-    merchant: Merchant,
+    merchant: ShopifyStore,
     threshold: int = 10
 ) -> List[Dict]:
     """Find products with total inventory below threshold"""
     products = db.query(Product).filter(
-        Product.merchant_id == merchant.id,
+        Product.merchant_id == merchant.merchant_id,
         Product.status == 'active'
     ).all()
 

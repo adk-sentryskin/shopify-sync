@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import httpx
 import time
 import logging
-from app.models import Product, Merchant
+from app.models import Product, ShopifyStore
 from app.config import settings
 from app.services.product_sync import parse_shopify_product, upsert_product
 from app.utils.helpers import sanitize_shop_domain
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 async def reconcile_products(
     db: Session,
-    merchant: Merchant,
+    merchant: ShopifyStore,
     shop_domain: str,
     access_token: str,
     mark_deleted: bool = False
@@ -31,7 +31,7 @@ async def reconcile_products(
 
     Args:
         db: Database session
-        merchant: Merchant object
+        merchant: ShopifyStore object
         shop_domain: Shopify shop domain
         access_token: OAuth access token
         mark_deleted: If True, marks products as deleted if they don't exist in Shopify
@@ -93,7 +93,7 @@ async def reconcile_products(
 
         # Step 2: Get all products from database (active only)
         db_products = db.query(Product).filter(
-            Product.merchant_id == merchant.id,
+            Product.merchant_id == merchant.merchant_id,
             Product.is_deleted == 0
         ).all()
 
@@ -258,7 +258,7 @@ async def fetch_all_products_from_shopify_for_reconciliation(
 
 async def force_full_resync(
     db: Session,
-    merchant: Merchant,
+    merchant: ShopifyStore,
     shop_domain: str,
     access_token: str
 ) -> Dict:
@@ -271,7 +271,7 @@ async def force_full_resync(
 
     Args:
         db: Database session
-        merchant: Merchant object
+        merchant: ShopifyStore object
         shop_domain: Shopify shop domain
         access_token: OAuth access token
 

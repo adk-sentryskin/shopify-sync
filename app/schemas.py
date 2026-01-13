@@ -3,22 +3,28 @@ from typing import Optional
 from datetime import datetime
 
 
-class MerchantBase(BaseModel):
+class ShopifyStoreBase(BaseModel):
     merchant_id: str
     shop_domain: str
 
 
-class MerchantCreate(MerchantBase):
+class ShopifyStoreCreate(ShopifyStoreBase):
     pass
 
 
-class MerchantResponse(MerchantBase):
+class ShopifyStoreResponse(ShopifyStoreBase):
     id: int
     is_active: int
     created_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
+
+
+# Legacy aliases for backwards compatibility during migration
+MerchantBase = ShopifyStoreBase
+MerchantCreate = ShopifyStoreCreate
+MerchantResponse = ShopifyStoreResponse
 
 
 class OAuthGenerateURL(BaseModel):

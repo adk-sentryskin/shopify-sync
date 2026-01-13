@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Path
 from sqlalchemy.orm import Session
 from typing import Dict, Optional
 from app.database import get_db
-from app.models import Merchant
+from app.models import ShopifyStore
 from app.middleware.auth import get_merchant_from_header
 from app.services.shopify_oauth import ShopifyOAuth
 from app.services.product_sync import sync_products, sync_single_product
@@ -16,14 +16,14 @@ async def get_products(
     limit: int = Query(50, description="Number of products to retrieve", ge=1, le=250),
     since_id: Optional[int] = Query(None, description="Retrieve products after this ID"),
     fields: Optional[str] = Query(None, description="Comma-separated list of fields to return"),
-    merchant: Merchant = Depends(get_merchant_from_header),
+    merchant: ShopifyStore = Depends(get_merchant_from_header),
     db: Session = Depends(get_db)
 ):
     """
     Get all products from Shopify store and sync to database
 
     Headers:
-        - X-Merchant-Id: Merchant identifier (required)
+        - X-ShopifyStore-Id: ShopifyStore identifier (required)
 
     Query Parameters:
         - limit: Number of products (default: 50, max: 250)
@@ -65,13 +65,13 @@ async def get_products(
 
 @router.get("/count")
 async def get_products_count(
-    merchant: Merchant = Depends(get_merchant_from_header)
+    merchant: ShopifyStore = Depends(get_merchant_from_header)
 ):
     """
     Get total count of products in the store
 
     Headers:
-        - X-Merchant-Id: Merchant identifier (required)
+        - X-ShopifyStore-Id: ShopifyStore identifier (required)
     """
     try:
         data = await shopify_oauth.make_shopify_request(
@@ -98,14 +98,14 @@ async def get_products_count(
 async def get_product(
     product_id: int = Path(..., description="Shopify product ID"),
     fields: Optional[str] = Query(None, description="Comma-separated list of fields to return"),
-    merchant: Merchant = Depends(get_merchant_from_header),
+    merchant: ShopifyStore = Depends(get_merchant_from_header),
     db: Session = Depends(get_db)
 ):
     """
     Get a single product by ID and sync to database
 
     Headers:
-        - X-Merchant-Id: Merchant identifier (required)
+        - X-ShopifyStore-Id: ShopifyStore identifier (required)
 
     Path Parameters:
         - product_id: Shopify product ID

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Path
 from sqlalchemy.orm import Session
 from typing import List, Dict
 from app.database import get_db
-from app.models import Merchant, Product
+from app.models import ShopifyStore, Product
 from app.middleware.auth import get_merchant_from_header
 from app.services.product_sync import (
     extract_variants_from_product,
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/api/variants", tags=["Variants"])
 @router.get("/{product_id}")
 async def get_product_variants(
     product_id: int = Path(..., description="Shopify product ID"),
-    merchant: Merchant = Depends(get_merchant_from_header),
+    merchant: ShopifyStore = Depends(get_merchant_from_header),
     db: Session = Depends(get_db)
 ):
     """
@@ -27,7 +27,7 @@ async def get_product_variants(
     with normalized, easy-to-consume format.
 
     Headers:
-        - X-Merchant-Id: Merchant identifier (required)
+        - X-ShopifyStore-Id: ShopifyStore identifier (required)
 
     Path Parameters:
         - product_id: Shopify product ID
@@ -69,7 +69,7 @@ async def get_product_variants(
 @router.get("/search/by-sku")
 async def search_by_sku(
     sku: str = Query(..., description="Variant SKU to search for", min_length=1),
-    merchant: Merchant = Depends(get_merchant_from_header),
+    merchant: ShopifyStore = Depends(get_merchant_from_header),
     db: Session = Depends(get_db)
 ):
     """
@@ -79,7 +79,7 @@ async def search_by_sku(
     with the specified SKU. Returns matching products with their variants.
 
     Headers:
-        - X-Merchant-Id: Merchant identifier (required)
+        - X-ShopifyStore-Id: ShopifyStore identifier (required)
 
     Query Parameters:
         - sku: Variant SKU to search for (required)
@@ -121,7 +121,7 @@ async def search_by_sku(
 @router.get("/inventory/low")
 async def get_low_inventory_products(
     threshold: int = Query(10, description="Inventory threshold (products below this level)", ge=0, le=1000),
-    merchant: Merchant = Depends(get_merchant_from_header),
+    merchant: ShopifyStore = Depends(get_merchant_from_header),
     db: Session = Depends(get_db)
 ):
     """
@@ -132,7 +132,7 @@ async def get_low_inventory_products(
     Useful for inventory management and low stock alerts.
 
     Headers:
-        - X-Merchant-Id: Merchant identifier (required)
+        - X-ShopifyStore-Id: ShopifyStore identifier (required)
 
     Query Parameters:
         - threshold: Inventory threshold (default: 10, min: 0, max: 1000)
@@ -187,8 +187,8 @@ async def variants_info():
         ],
         "authentication": {
             "required": True,
-            "header": "X-Merchant-Id",
-            "description": "All endpoints require merchant authentication via X-Merchant-Id header"
+            "header": "X-ShopifyStore-Id",
+            "description": "All endpoints require merchant authentication via X-ShopifyStore-Id header"
         },
         "variant_fields": {
             "variant_id": "Shopify variant ID",

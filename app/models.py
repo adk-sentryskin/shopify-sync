@@ -7,8 +7,8 @@ from app.database import Base
 from app.utils.encryption import get_encryption
 
 
-class Merchant(Base):
-    __tablename__ = "merchants"
+class ShopifyStore(Base):
+    __tablename__ = "shopify_stores"
     __table_args__ = {'schema': 'shopify_sync'}
 
     id = Column(Integer, primary_key=True, index=True)
@@ -52,7 +52,7 @@ class Merchant(Base):
             self._access_token = encryption.encrypt(value)
 
     def __repr__(self):
-        return f"<Merchant(merchant_id={self.merchant_id}, shop_domain={self.shop_domain})>"
+        return f"<ShopifyStore(merchant_id={self.merchant_id}, shop_domain={self.shop_domain})>"
 
 
 class Product(Base):
@@ -62,7 +62,12 @@ class Product(Base):
     # Primary Keys
     id = Column(Integer, primary_key=True, autoincrement=True)
     shopify_product_id = Column(BigInteger, unique=True, index=True, nullable=False)
-    merchant_id = Column(Integer, ForeignKey('shopify_sync.merchants.id'), nullable=False)
+
+    # Foreign Keys
+    store_id = Column(Integer, ForeignKey('shopify_sync.shopify_stores.id'), nullable=False)
+
+    # Denormalized Tenant Identifier (for fast multi-tenant queries)
+    merchant_id = Column(String(255), nullable=False, index=True)
 
     # Searchable Fields
     title = Column(String(500))
@@ -89,10 +94,10 @@ class Product(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # Relationships
-    merchant = relationship("Merchant", backref="products")
+    store = relationship("ShopifyStore", backref="products", foreign_keys=[store_id])
 
     def __repr__(self):
-        return f"<Product(shopify_product_id={self.shopify_product_id}, title={self.title})>"
+        return f"<Product(shopify_product_id={self.shopify_product_id}, merchant_id={self.merchant_id}, title={self.title})>"
 
 
 class Webhook(Base):
@@ -105,7 +110,13 @@ class Webhook(Base):
 
     # Primary Keys
     id = Column(Integer, primary_key=True, autoincrement=True)
-    merchant_id = Column(Integer, ForeignKey('shopify_sync.merchants.id'), nullable=False)
+
+    # Foreign Keys
+    store_id = Column(Integer, ForeignKey('shopify_sync.shopify_stores.id'), nullable=False)
+
+    # Denormalized Tenant Identifier (for fast multi-tenant queries)
+    merchant_id = Column(String(255), nullable=False, index=True)
+
     shopify_webhook_id = Column(BigInteger, unique=True, index=True, nullable=False)
 
     # Webhook Details
@@ -122,7 +133,7 @@ class Webhook(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # Relationships
-    merchant = relationship("Merchant", backref="webhooks")
+    store = relationship("ShopifyStore", backref="webhooks", foreign_keys=[store_id])
 
     def __repr__(self):
         return f"<Webhook(topic={self.topic}, merchant_id={self.merchant_id}, shopify_webhook_id={self.shopify_webhook_id})>"
