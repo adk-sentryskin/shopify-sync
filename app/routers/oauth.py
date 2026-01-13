@@ -152,9 +152,10 @@ async def complete_oauth(
 
     logger.info(f"[OAuth Complete] HMAC verification successful for shop: {shop_domain}")
 
-    # Find or create merchant
+    # Find merchant by merchant_id OR shop_domain (to handle both unique constraints)
     merchant = db.query(ShopifyStore).filter(
-        ShopifyStore.merchant_id == oauth_data.merchant_id
+        (ShopifyStore.merchant_id == oauth_data.merchant_id) |
+        (ShopifyStore.shop_domain == shop_domain)
     ).first()
 
     # Check for duplicate OAuth completion (prevent replay attacks)
@@ -169,6 +170,7 @@ async def complete_oauth(
                 )
 
     if not merchant:
+        # Create new merchant record
         merchant = ShopifyStore(
             merchant_id=oauth_data.merchant_id,
             shop_domain=shop_domain
@@ -176,6 +178,8 @@ async def complete_oauth(
         db.add(merchant)
         db.flush()
     else:
+        # Update existing record (handles both merchant_id and shop_domain changes)
+        merchant.merchant_id = oauth_data.merchant_id
         merchant.shop_domain = shop_domain
 
     try:
