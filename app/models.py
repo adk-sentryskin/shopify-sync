@@ -3,6 +3,7 @@ from sqlalchemy.sql import func
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import JSONB
+from pgvector.sqlalchemy import Vector
 from app.database import Base
 from app.utils.encryption import get_encryption
 
@@ -83,6 +84,9 @@ class Product(Base):
 
     # Full Shopify data (for flexibility)
     raw_data = Column(JSONB)  # Complete Shopify product JSON
+
+    # Vector Embedding for Semantic Search
+    embedding = Column(Vector(768), nullable=True)  # 768-dim embedding from Vertex AI text-embedding-004
 
     # Soft Delete Fields
     is_deleted = Column(Integer, default=0)  # 0=active, 1=soft deleted

@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     RECONCILIATION_HOUR: int = 2  # Hour of day (0-23) to run reconciliation (default: 2 AM)
     RECONCILIATION_MINUTE: int = 0  # Minute of hour (0-59) to run reconciliation (default: 0)
 
+    # Google Cloud Platform (for Vertex AI embeddings)
+    GCP_PROJECT_ID: Optional[str] = None  # Google Cloud project ID
+    GCP_REGION: str = "us-central1"  # Vertex AI region (default: us-central1)
+    ENABLE_EMBEDDINGS: bool = True  # Set to False to disable embedding generation
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

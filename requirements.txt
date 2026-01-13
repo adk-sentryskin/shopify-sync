@@ -10,3 +10,8 @@ pydantic-settings==2.1.0
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 apscheduler==3.10.4
+
+# Vector embeddings and Google Cloud AI
+pgvector==0.2.5
+google-cloud-aiplatform==1.40.0
+google-cloud-storage==2.14.0

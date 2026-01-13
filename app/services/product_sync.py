@@ -12,6 +12,23 @@ from app.utils.helpers import sanitize_shop_domain
 
 logger = logging.getLogger(__name__)
 
+# Lazy import for embedding service (only if embeddings enabled)
+_embedding_service = None
+
+
+def get_embedding_service():
+    """Lazy load embedding service to avoid import errors if not configured"""
+    global _embedding_service
+    if _embedding_service is None and settings.ENABLE_EMBEDDINGS:
+        try:
+            from app.services.embedding_service import get_embedding_service as _get_svc
+            _embedding_service = _get_svc()
+            logger.info("✅ Embedding service initialized")
+        except Exception as e:
+            logger.warning(f"⚠️ Embedding service not available: {e}")
+            _embedding_service = False  # Mark as unavailable
+    return _embedding_service if _embedding_service is not False else None
+
 
 def parse_shopify_product(product_data: dict) -> dict:
     """Extract and normalize Shopify product data for database storage"""
@@ -47,22 +64,45 @@ def upsert_product(db: Session, merchant: ShopifyStore, product_data: dict) -> P
     # Set denormalized merchant_id for fast multi-tenant queries
     parsed_data['merchant_id'] = merchant.merchant_id
 
+    # Generate embedding for semantic search (if enabled)
+    embedding = None
+    if settings.ENABLE_EMBEDDINGS:
+        try:
+            emb_service = get_embedding_service()
+            if emb_service:
+                # Prepare product text for embedding
+                product_text = emb_service.prepare_product_text(product_data)
+                embedding = emb_service.generate_embedding(product_text)
+                if embedding:
+                    parsed_data['embedding'] = embedding
+                    logger.debug(f"Generated embedding for product {product_data.get('id')}")
+        except Exception as e:
+            logger.warning(f"Failed to generate embedding for product {product_data.get('id')}: {e}")
+
     stmt = insert(Product).values(**parsed_data)
+
+    # Build update dict
+    update_dict = {
+        'title': parsed_data['title'],
+        'vendor': parsed_data['vendor'],
+        'product_type': parsed_data['product_type'],
+        'handle': parsed_data['handle'],
+        'status': parsed_data['status'],
+        'shopify_created_at': parsed_data['shopify_created_at'],
+        'shopify_updated_at': parsed_data['shopify_updated_at'],
+        'published_at': parsed_data['published_at'],
+        'raw_data': parsed_data['raw_data'],
+        'synced_at': func.now(),
+        'updated_at': func.now()
+    }
+
+    # Add embedding to update if it was generated
+    if embedding:
+        update_dict['embedding'] = embedding
+
     stmt = stmt.on_conflict_do_update(
         index_elements=['shopify_product_id'],
-        set_={
-            'title': parsed_data['title'],
-            'vendor': parsed_data['vendor'],
-            'product_type': parsed_data['product_type'],
-            'handle': parsed_data['handle'],
-            'status': parsed_data['status'],
-            'shopify_created_at': parsed_data['shopify_created_at'],
-            'shopify_updated_at': parsed_data['shopify_updated_at'],
-            'published_at': parsed_data['published_at'],
-            'raw_data': parsed_data['raw_data'],
-            'synced_at': func.now(),
-            'updated_at': func.now()
-        }
+        set_=update_dict
     )
 
     db.execute(stmt)
