@@ -134,7 +134,8 @@ jobs:
             --max-instances=10
             --timeout=300
             --allow-unauthenticated
-            --set-env-vars=ENVIRONMENT=staging,DEBUG=false,LOG_LEVEL=INFO,DB_DSN=postgresql://user_dev:DkrPg_9FvA2LwQm7XHc@34.45.186.110:5432/chekoutai?options=-c%20search_path=shopify_sync,SHOPIFY_SCOPES=read_products,SHOPIFY_API_VERSION=2024-01,OAUTH_REDIRECT_URL=https://shopify-sync-service-staging-vgcxyi5qqa-uc.a.run.app/api/oauth/callback,ENCRYPTION_KEY=AJ0TEQ-tHPSQAPsQ4NlgEJd38dFmsLxCNbieWcZIRiI=,APP_URL=https://shopify-sync-service-staging-vgcxyi5qqa-uc.a.run.app,ENABLE_SCHEDULER=true,RECONCILIATION_HOUR=2,RECONCILIATION_MINUTE=0,API_KEY=Uer9FZDW7nuwPwC_Xa3jgt9OF215NSqI9QsqL62DhJU
+            --set-env-vars=ENVIRONMENT=staging,DEBUG=false,LOG_LEVEL=INFO,SHOPIFY_SCOPES=read_products,SHOPIFY_API_VERSION=2024-01,APP_URL=https://shopify-sync-service-staging-vgcxyi5qqa-uc.a.run.app,ENABLE_SCHEDULER=true,RECONCILIATION_HOUR=2,RECONCILIATION_MINUTE=0,GCP_PROJECT_ID=${{ env.PROJECT_ID }},GCP_REGION=${{ env.REGION }},ENABLE_EMBEDDINGS=true
+            --set-secrets=DB_DSN=DB_DSN:latest,ENCRYPTION_KEY=ENCRYPTION_KEY:latest,API_KEY=API_KEY:latest,SHOPIFY_API_KEY=SHOPIFY_API_KEY:latest,SHOPIFY_API_SECRET=SHOPIFY_API_SECRET:latest,OAUTH_REDIRECT_URL=OAUTH_REDIRECT_URL_STAGING:latest
       - name: Verify deployment
         run: |
           SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }}-staging \

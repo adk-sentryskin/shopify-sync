@@ -21,10 +21,8 @@ class Settings(BaseSettings):
     API_KEY: str
 
     # Shopify API - can be provided as env vars or secrets
-    # SHOPIFY_API_KEY: str  # Temporarily commented out - Key: 2d7b087dea3ffdfc52f7d01bc0111c27
-    # SHOPIFY_API_SECRET: str  # Temporarily commented out - Secret: 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
-    SHOPIFY_API_KEY: str = "2d7b087dea3ffdfc52f7d01bc0111c27"
-    SHOPIFY_API_SECRET: str = "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"
+    SHOPIFY_API_KEY: str
+    SHOPIFY_API_SECRET: str
     SHOPIFY_API_VERSION: str = "2024-01"
     SHOPIFY_SCOPES: str = "read_products,read_orders,read_customers"
 
@@ -57,6 +55,7 @@ class Settings(BaseSettings):
     GCP_PROJECT_ID: Optional[str] = None  # Google Cloud project ID
     GCP_REGION: str = "us-central1"  # Vertex AI region (default: us-central1)
     ENABLE_EMBEDDINGS: bool = True  # Set to False to disable embedding generation
+    GOOGLE_APPLICATION_CREDENTIALS: Optional[str] = None  # Path to service account key file
 
     model_config = SettingsConfigDict(
         env_file=".env",

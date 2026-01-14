@@ -5,15 +5,15 @@ services:
     image: postgres:15-alpine
     container_name: shopify_sync_db
     environment:
-      POSTGRES_USER: shopify
-      POSTGRES_PASSWORD: shopify123
-      POSTGRES_DB: shopify_sync
+      POSTGRES_USER: ${POSTGRES_USER:-shopify}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shopify123}
+      POSTGRES_DB: ${POSTGRES_DB:-shopify_sync}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U shopify"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shopify}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -24,12 +24,18 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DB_DSN: postgresql://shopify:shopify123@db:5432/shopify_sync?options=-c%20search_path=shopify_sync
+      DB_DSN: ${DB_DSN:-postgresql://shopify:shopify123@db:5432/shopify_sync?options=-c%20search_path=shopify_sync}
       SHOPIFY_API_KEY: ${SHOPIFY_API_KEY}
       SHOPIFY_API_SECRET: ${SHOPIFY_API_SECRET}
-      SHOPIFY_API_VERSION: 2024-01
-      SHOPIFY_SCOPES: read_products,read_orders,read_customers
+      SHOPIFY_API_VERSION: ${SHOPIFY_API_VERSION:-2024-01}
+      SHOPIFY_SCOPES: ${SHOPIFY_SCOPES:-read_products,read_orders,read_customers}
       OAUTH_REDIRECT_URL: ${OAUTH_REDIRECT_URL:-http://localhost:8000/api/oauth/callback}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      API_KEY: ${API_KEY}
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID}
+      GCP_REGION: ${GCP_REGION:-us-central1}
+      ENABLE_EMBEDDINGS: ${ENABLE_EMBEDDINGS:-true}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS}
     depends_on:
       db:
         condition: service_healthy
