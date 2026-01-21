@@ -205,6 +205,174 @@ async def product_delete_webhook(
         )
 
 
+@router.post("/customers/data_request")
+async def customers_data_request_webhook(
+    request: Request,
+    db: Session = Depends(get_db),
+    webhook_data: dict = Depends(verify_shopify_webhook)
+):
+    """
+    Handle Shopify customers/data_request webhook (GDPR compliance)
+
+    Triggered when a customer requests their data.
+    This endpoint acknowledges the request. The actual data export
+    should be handled according to your data retention policies.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    try:
+        shop_domain = webhook_data["shop_domain"]
+        request_data = json.loads(webhook_data["body"])
+
+        # Log the data request for compliance tracking
+        logger.info(f"[GDPR] Customer data request received from shop: {shop_domain}")
+        logger.info(f"[GDPR] Request details: shop_id={request_data.get('shop_id')}, "
+                   f"shop_domain={request_data.get('shop_domain')}, "
+                   f"customer_id={request_data.get('customer', {}).get('id')}, "
+                   f"email={request_data.get('customer', {}).get('email')}")
+
+        # Find merchant by shop domain
+        merchant = db.query(ShopifyStore).filter(
+            ShopifyStore.shop_domain == shop_domain
+        ).first()
+
+        if merchant:
+            logger.info(f"[GDPR] Data request for merchant_id: {merchant.merchant_id}")
+
+        # Acknowledge receipt - Shopify expects a 200 response
+        # Actual data gathering would happen async based on your policies
+        return {
+            "status": "success",
+            "message": "Customer data request acknowledged",
+            "shop_domain": shop_domain
+        }
+
+    except json.JSONDecodeError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid JSON in webhook body: {str(e)}"
+        )
+
+
+@router.post("/customers/redact")
+async def customers_redact_webhook(
+    request: Request,
+    db: Session = Depends(get_db),
+    webhook_data: dict = Depends(verify_shopify_webhook)
+):
+    """
+    Handle Shopify customers/redact webhook (GDPR compliance)
+
+    Triggered when a store owner requests deletion of customer data,
+    or when a customer requests deletion of their data.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    try:
+        shop_domain = webhook_data["shop_domain"]
+        request_data = json.loads(webhook_data["body"])
+
+        customer_id = request_data.get('customer', {}).get('id')
+        customer_email = request_data.get('customer', {}).get('email')
+
+        logger.info(f"[GDPR] Customer redact request received from shop: {shop_domain}")
+        logger.info(f"[GDPR] Customer to redact: id={customer_id}, email={customer_email}")
+
+        # Find merchant by shop domain
+        merchant = db.query(ShopifyStore).filter(
+            ShopifyStore.shop_domain == shop_domain
+        ).first()
+
+        if merchant:
+            logger.info(f"[GDPR] Processing redact for merchant_id: {merchant.merchant_id}")
+            # This app primarily stores product data, not customer data
+            # If you store customer data, delete it here
+
+        # Acknowledge receipt - Shopify expects a 200 response
+        return {
+            "status": "success",
+            "message": "Customer redact request acknowledged",
+            "shop_domain": shop_domain,
+            "customer_id": customer_id
+        }
+
+    except json.JSONDecodeError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid JSON in webhook body: {str(e)}"
+        )
+
+
+@router.post("/shop/redact")
+async def shop_redact_webhook(
+    request: Request,
+    db: Session = Depends(get_db),
+    webhook_data: dict = Depends(verify_shopify_webhook)
+):
+    """
+    Handle Shopify shop/redact webhook (GDPR compliance)
+
+    Triggered 48 hours after a store owner uninstalls the app.
+    This is the signal to delete all data associated with this shop.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    try:
+        shop_domain = webhook_data["shop_domain"]
+        request_data = json.loads(webhook_data["body"])
+
+        shop_id = request_data.get('shop_id')
+
+        logger.info(f"[GDPR] Shop redact request received for shop: {shop_domain}, shop_id: {shop_id}")
+
+        # Find merchant by shop domain
+        merchant = db.query(ShopifyStore).filter(
+            ShopifyStore.shop_domain == shop_domain
+        ).first()
+
+        if merchant:
+            logger.info(f"[GDPR] Marking merchant as inactive and clearing data: {merchant.merchant_id}")
+
+            # Soft delete products associated with this merchant
+            products_deleted = db.query(Product).filter(
+                Product.merchant_id == merchant.id
+            ).update({
+                "is_deleted": 1,
+                "status": "redacted",
+                "deleted_at": datetime.now(timezone.utc)
+            })
+
+            # Mark webhooks as inactive
+            from app.models import Webhook
+            db.query(Webhook).filter(
+                Webhook.store_id == merchant.id
+            ).update({"is_active": 0})
+
+            # Mark merchant as inactive and clear sensitive data
+            merchant.is_active = 0
+            merchant.access_token = None  # Clear the access token
+
+            db.commit()
+
+            logger.info(f"[GDPR] Shop redact complete: {products_deleted} products marked as redacted")
+
+        # Acknowledge receipt - Shopify expects a 200 response
+        return {
+            "status": "success",
+            "message": "Shop redact request processed",
+            "shop_domain": shop_domain
+        }
+
+    except json.JSONDecodeError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid JSON in webhook body: {str(e)}"
+        )
+
+
 @router.get("/")
 async def webhook_info():
     """
@@ -226,11 +394,27 @@ async def webhook_info():
                 "topic": "products/delete",
                 "endpoint": "/api/webhooks/products/delete",
                 "description": "Triggered when a product is deleted"
+            },
+            {
+                "topic": "customers/data_request",
+                "endpoint": "/api/webhooks/customers/data_request",
+                "description": "GDPR: Triggered when a customer requests their data"
+            },
+            {
+                "topic": "customers/redact",
+                "endpoint": "/api/webhooks/customers/redact",
+                "description": "GDPR: Triggered when customer data should be deleted"
+            },
+            {
+                "topic": "shop/redact",
+                "endpoint": "/api/webhooks/shop/redact",
+                "description": "GDPR: Triggered 48h after app uninstall to delete shop data"
             }
         ],
         "setup": {
-            "automatic": "Webhooks are automatically registered during OAuth flow",
-            "manual_registration": "Use POST /api/webhooks/register?merchant_id=<id> to manually register",
+            "automatic": "Product webhooks are automatically registered during OAuth flow",
+            "compliance": "GDPR webhooks must be configured in Shopify Partner Dashboard under App Setup",
+            "manual_registration": "Use POST /api/webhooks/register?merchant_id=<id> to manually register product webhooks",
             "verification": "All webhooks are automatically verified using HMAC signatures"
         }
     }
