@@ -17,10 +17,11 @@ on:
   workflow_dispatch:
 
 env:
-  PROJECT_ID: shopify-473015
-  SERVICE_NAME: shopify-sync-service
-  REGION: us-central1
-  IMAGE_NAME: gcr.io/shopify-473015/shopify-sync-service
+  # GitHub Variables (set in repository Settings > Secrets and Variables > Actions > Variables)
+  PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  SERVICE_NAME: ${{ vars.SERVICE_NAME }}
+  REGION: ${{ vars.GCP_REGION }}
+  IMAGE_NAME: gcr.io/${{ vars.GCP_PROJECT_ID }}/${{ vars.SERVICE_NAME }}
 
 jobs:
   # =============================================================================
@@ -134,8 +135,8 @@ jobs:
             --max-instances=10
             --timeout=300
             --allow-unauthenticated
-            --set-env-vars=ENVIRONMENT=staging,DEBUG=false,LOG_LEVEL=INFO,SHOPIFY_SCOPES=read_products,SHOPIFY_API_VERSION=2024-01,APP_URL=https://shopify-sync-service-staging-vgcxyi5qqa-uc.a.run.app,ENABLE_SCHEDULER=true,RECONCILIATION_HOUR=2,RECONCILIATION_MINUTE=0,GCP_PROJECT_ID=${{ env.PROJECT_ID }},GCP_REGION=${{ env.REGION }},ENABLE_EMBEDDINGS=true
-            --set-secrets=DB_DSN=DB_DSN:latest,ENCRYPTION_KEY=ENCRYPTION_KEY:latest,API_KEY=API_KEY:latest,SHOPIFY_API_KEY=SHOPIFY_API_KEY:latest,SHOPIFY_API_SECRET=SHOPIFY_API_SECRET:latest,OAUTH_REDIRECT_URL=OAUTH_REDIRECT_URL_STAGING:latest
+            --set-env-vars=ENVIRONMENT=staging,DEBUG=false,LOG_LEVEL=INFO,SHOPIFY_SCOPES=${{ vars.SHOPIFY_SCOPES }},SHOPIFY_API_VERSION=${{ vars.SHOPIFY_API_VERSION }},ENABLE_SCHEDULER=true,RECONCILIATION_HOUR=${{ vars.RECONCILIATION_HOUR }},RECONCILIATION_MINUTE=${{ vars.RECONCILIATION_MINUTE }},GCP_PROJECT_ID=${{ env.PROJECT_ID }},GCP_REGION=${{ env.REGION }},ENABLE_EMBEDDINGS=true
+            --set-secrets=DB_DSN=DB_DSN:latest,ENCRYPTION_KEY=ENCRYPTION_KEY:latest,API_KEY=API_KEY:latest,SHOPIFY_API_KEY=SHOPIFY_API_KEY:latest,SHOPIFY_API_SECRET=SHOPIFY_API_SECRET:latest,OAUTH_REDIRECT_URL=OAUTH_REDIRECT_URL_STAGING:latest,APP_URL=APP_URL_STAGING:latest
       - name: Verify deployment
         run: |
           SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }}-staging \
