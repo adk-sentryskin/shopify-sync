@@ -1,0 +1,11 @@
+{
+  "name": "shopify-sync-service",
+  "version": "1.0.0",
+  "description": "Shopify Product Sync Service",
+  "private": true,
+  "scripts": {
+    "deploy": "shopify app deploy"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

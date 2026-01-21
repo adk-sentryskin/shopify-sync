@@ -1,0 +1,22 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "4070469388d97b149a6be2a88a05a98c"
+name = "product-sync"
+application_url = "https://ai-builder.chekout.ai"
+embedded = false
+
+[webhooks]
+api_version = "2025-10"
+
+[[webhooks.subscriptions]]
+compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
+uri = "https://shopify-sync-service-staging-vgcxyi5qqa-uc.a.run.app/api/webhooks/compliance"
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_inventory,read_product_listings,read_products"
+optional_scopes = [ ]
+use_legacy_install_flow = false
+
+[auth]
+redirect_urls = [ "https://ai-builder.chekout.ai/sync/shopify/callback" ]

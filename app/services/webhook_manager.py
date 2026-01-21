@@ -22,6 +22,22 @@ WEBHOOK_CONFIG = [
         "topic": "products/delete",
         "address": "{app_url}/api/webhooks/products/delete",
         "format": "json"
+    },
+    # Mandatory compliance webhooks for GDPR/CCPA
+    {
+        "topic": "customers/data_request",
+        "address": "{app_url}/api/webhooks/customers/data_request",
+        "format": "json"
+    },
+    {
+        "topic": "customers/redact",
+        "address": "{app_url}/api/webhooks/customers/redact",
+        "format": "json"
+    },
+    {
+        "topic": "shop/redact",
+        "address": "{app_url}/api/webhooks/shop/redact",
+        "format": "json"
     }
 ]
 

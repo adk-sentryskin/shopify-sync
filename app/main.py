@@ -97,6 +97,10 @@ def custom_openapi():
         "/api/webhooks/products/create",
         "/api/webhooks/products/update",
         "/api/webhooks/products/delete",
+        "/api/webhooks/compliance",  # Single endpoint for all compliance webhooks
+        "/api/webhooks/customers/data_request",
+        "/api/webhooks/customers/redact",
+        "/api/webhooks/shop/redact",
         "/api/webhooks/",
         "/api/variants/",
         "/api/sync/"
@@ -136,7 +140,16 @@ app.add_middleware(
     allow_origins=["*"],
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allow_headers=["Content-Type", "X-API-Key", "X-Merchant-Id", "Authorization", "Accept"],
+    allow_headers=[
+        "Content-Type", 
+        "X-API-Key", 
+        "X-Merchant-Id", 
+        "Authorization", 
+        "Accept",
+        "X-Shopify-Hmac-SHA256",  # Required for webhook verification
+        "X-Shopify-Shop-Domain",   # Required for webhook processing
+        "X-Shopify-Topic"          # Required for webhook routing
+    ],
     expose_headers=["Content-Type"],
     max_age=600,  # Cache preflight requests for 10 minutes
 )
@@ -165,6 +178,10 @@ async def api_key_middleware(request: Request, call_next):
         "/api/webhooks/products/create",
         "/api/webhooks/products/update",
         "/api/webhooks/products/delete",
+        "/api/webhooks/compliance",  # Single endpoint for all compliance webhooks
+        "/api/webhooks/customers/data_request",
+        "/api/webhooks/customers/redact",
+        "/api/webhooks/shop/redact",
     ]
 
     path = request.url.path

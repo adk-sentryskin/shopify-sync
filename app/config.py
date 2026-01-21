@@ -23,8 +23,8 @@ class Settings(BaseSettings):
     # Shopify API - can be provided as env vars or secrets
     SHOPIFY_API_KEY: str
     SHOPIFY_API_SECRET: str
-    SHOPIFY_API_VERSION: str = "2024-01"
-    SHOPIFY_SCOPES: str = "read_products,read_orders,read_customers"
+    SHOPIFY_API_VERSION: str = "2025-10"
+    SHOPIFY_SCOPES: str = "read_inventory,read_product_listings,read_products"
 
     # Application (optional - have sensible defaults)
     APP_HOST: str = "0.0.0.0"
