@@ -3,7 +3,12 @@ set -e
 
 # =============================================================================
 # Cloud Run Deployment Script for Shopify Sync Service
-# Usage: ./deploy.sh [staging|production]
+# Usage: ./deploy.sh [development|production]
+#
+# This script is aligned with .github/workflows/deploy.yml for consistency
+# between manual and CI/CD deployments.
+#
+# Secrets are managed via Google Cloud Secret Manager (not .env file)
 # =============================================================================
 
 # Colors for output
@@ -13,13 +18,13 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Get environment from argument (default: staging)
-ENVIRONMENT="${1:-staging}"
+# Get environment from argument (default: development)
+ENVIRONMENT="${1:-development}"
 
 # Validate environment
-if [ "$ENVIRONMENT" != "staging" ] && [ "$ENVIRONMENT" != "production" ]; then
+if [ "$ENVIRONMENT" != "development" ] && [ "$ENVIRONMENT" != "production" ]; then
     echo -e "${RED}Error: Invalid environment '$ENVIRONMENT'${NC}"
-    echo "Usage: $0 [staging|production]"
+    echo "Usage: $0 [development|production]"
     exit 1
 fi
 
@@ -34,35 +39,51 @@ echo ""
 PROJECT_ID="${GCP_PROJECT_ID:-shopify-473015}"
 REGION="${GCP_REGION:-us-central1}"
 
-# Environment-specific configuration
-if [ "$ENVIRONMENT" = "staging" ]; then
-    SERVICE_NAME="shopify-sync-service-staging"
+# Environment-specific configuration (aligned with deploy.yml)
+if [ "$ENVIRONMENT" = "development" ]; then
+    SERVICE_NAME="shopify-sync-dev"
     MEMORY="512Mi"
     CPU="1"
     MIN_INSTANCES="0"
-    MAX_INSTANCES="5"
+    MAX_INSTANCES="10"
     LOG_LEVEL="INFO"
     DEBUG="false"
+    CONCURRENCY=""
+    # Secret names for development
+    DB_DSN_SECRET="DB_DSN"
+    API_KEY_SECRET="API_KEY"
+    SHOPIFY_API_KEY_SECRET="SHOPIFY_API_KEY"
+    SHOPIFY_API_SECRET_SECRET="SHOPIFY_API_SECRET"
+    OAUTH_REDIRECT_URL_SECRET="OAUTH_REDIRECT_URL"
+    APP_URL_SECRET="APP_URL"
 else  # production
-    SERVICE_NAME="shopify-sync-service"
+    SERVICE_NAME="shopify-sync"
     MEMORY="1Gi"
     CPU="2"
     MIN_INSTANCES="1"
-    MAX_INSTANCES="20"
+    MAX_INSTANCES="100"
     LOG_LEVEL="WARNING"
     DEBUG="false"
+    CONCURRENCY="80"
+    # Secret names for production (with _PROD suffix)
+    DB_DSN_SECRET="DB_DSN_PROD"
+    API_KEY_SECRET="API_KEY_PROD"
+    SHOPIFY_API_KEY_SECRET="SHOPIFY_API_KEY_PROD"
+    SHOPIFY_API_SECRET_SECRET="SHOPIFY_API_SECRET_PROD"
+    OAUTH_REDIRECT_URL_SECRET="OAUTH_REDIRECT_URL_PROD"
+    APP_URL_SECRET="APP_URL_PROD"
 fi
 
-IMAGE_NAME="gcr.io/${PROJECT_ID}/shopify-sync-service"
+IMAGE_NAME="gcr.io/${PROJECT_ID}/shopify-sync"
 
-# Load environment variables from .env file
+# Load local environment variables from .env file (optional, for overrides)
 if [ -f ".env" ]; then
-    echo -e "${YELLOW}Loading environment variables from .env file...${NC}"
+    echo -e "${YELLOW}Loading local overrides from .env file...${NC}"
     set -a
     source <(grep -v '^#' .env | grep -v '^$' | sed 's/\r$//')
     set +a
 else
-    echo -e "${YELLOW}Warning: .env file not found. Using environment variables.${NC}"
+    echo -e "${YELLOW}Note: .env file not found. Using defaults and Secret Manager for secrets.${NC}"
 fi
 
 # =============================================================================
@@ -113,32 +134,30 @@ echo "   Log Level:      $LOG_LEVEL"
 echo ""
 
 # =============================================================================
-# Build Environment Variables
+# Build Environment Variables (aligned with deploy.yml)
 # =============================================================================
 
-ENV_FILE=$(mktemp)
-cat > ${ENV_FILE} << EOF
-ENVIRONMENT: ${ENVIRONMENT}
-DEBUG: "${DEBUG}"
-LOG_LEVEL: "${LOG_LEVEL}"
-DB_DSN: "${DB_DSN}"
-ENCRYPTION_KEY: "${ENCRYPTION_KEY}"
-API_KEY: "${API_KEY}"
-SHOPIFY_API_KEY: "${SHOPIFY_API_KEY}"
-SHOPIFY_API_SECRET: "${SHOPIFY_API_SECRET}"
-SHOPIFY_SCOPES: "${SHOPIFY_SCOPES:-read_products,read_orders,read_customers}"
-SHOPIFY_API_VERSION: "${SHOPIFY_API_VERSION:-2024-01}"
-OAUTH_REDIRECT_URL: "${OAUTH_REDIRECT_URL}"
-APP_URL: "${APP_URL}"
-ENABLE_SCHEDULER: "${ENABLE_SCHEDULER:-true}"
-RECONCILIATION_HOUR: "${RECONCILIATION_HOUR:-3}"
-RECONCILIATION_MINUTE: "${RECONCILIATION_MINUTE:-0}"
-ENABLE_EMBEDDINGS: "${ENABLE_EMBEDDINGS:-true}"
-GCP_PROJECT_ID: "${PROJECT_ID}"
-GCP_REGION: "${REGION}"
-EOF
+# Environment variables (non-secret values)
+ENV_VARS="ENVIRONMENT=${ENVIRONMENT}"
+ENV_VARS="${ENV_VARS},DEBUG=${DEBUG}"
+ENV_VARS="${ENV_VARS},LOG_LEVEL=${LOG_LEVEL}"
+ENV_VARS="${ENV_VARS},SHOPIFY_SCOPES=${SHOPIFY_SCOPES:-read_products,read_orders,read_customers}"
+ENV_VARS="${ENV_VARS},SHOPIFY_API_VERSION=${SHOPIFY_API_VERSION:-2024-01}"
+ENV_VARS="${ENV_VARS},ENABLE_SCHEDULER=${ENABLE_SCHEDULER:-true}"
+ENV_VARS="${ENV_VARS},RECONCILIATION_HOUR=${RECONCILIATION_HOUR:-3}"
+ENV_VARS="${ENV_VARS},RECONCILIATION_MINUTE=${RECONCILIATION_MINUTE:-0}"
+ENV_VARS="${ENV_VARS},GCP_PROJECT_ID=${PROJECT_ID}"
+ENV_VARS="${ENV_VARS},GCP_REGION=${REGION}"
+ENV_VARS="${ENV_VARS},ENABLE_EMBEDDINGS=${ENABLE_EMBEDDINGS:-true}"
 
-trap "rm -f $ENV_FILE" EXIT
+# Secrets (using Google Cloud Secret Manager - aligned with deploy.yml)
+SECRETS="DB_DSN=${DB_DSN_SECRET}:latest"
+SECRETS="${SECRETS},ENCRYPTION_KEY=ENCRYPTION_KEY:latest"
+SECRETS="${SECRETS},API_KEY=${API_KEY_SECRET}:latest"
+SECRETS="${SECRETS},SHOPIFY_API_KEY=${SHOPIFY_API_KEY_SECRET}:latest"
+SECRETS="${SECRETS},SHOPIFY_API_SECRET=${SHOPIFY_API_SECRET_SECRET}:latest"
+SECRETS="${SECRETS},OAUTH_REDIRECT_URL=${OAUTH_REDIRECT_URL_SECRET}:latest"
+SECRETS="${SECRETS},APP_URL=${APP_URL_SECRET}:latest"
 
 # =============================================================================
 # Build and Deploy
@@ -152,9 +171,11 @@ gcloud config set project ${PROJECT_ID}
 echo -e "${YELLOW}Building and pushing Docker image...${NC}"
 gcloud builds submit --tag ${IMAGE_NAME}:latest --project ${PROJECT_ID}
 
-# Deploy to Cloud Run
+# Deploy to Cloud Run (aligned with deploy.yml)
 echo -e "${YELLOW}Deploying to Cloud Run...${NC}"
-gcloud run deploy ${SERVICE_NAME} \
+
+# Build deployment command
+DEPLOY_CMD="gcloud run deploy ${SERVICE_NAME} \
     --image ${IMAGE_NAME}:latest \
     --platform managed \
     --region ${REGION} \
@@ -165,10 +186,19 @@ gcloud run deploy ${SERVICE_NAME} \
     --min-instances ${MIN_INSTANCES} \
     --max-instances ${MAX_INSTANCES} \
     --allow-unauthenticated \
-    --env-vars-file ${ENV_FILE}
+    --set-env-vars ${ENV_VARS} \
+    --set-secrets ${SECRETS}"
+
+# Add concurrency for production (aligned with deploy.yml)
+if [ -n "$CONCURRENCY" ]; then
+    DEPLOY_CMD="${DEPLOY_CMD} --concurrency ${CONCURRENCY}"
+fi
+
+# Execute deployment
+eval ${DEPLOY_CMD}
 
 # =============================================================================
-# Post-deployment
+# Post-deployment (aligned with deploy.yml)
 # =============================================================================
 
 # Get the service URL
@@ -177,21 +207,16 @@ SERVICE_URL=$(gcloud run services describe ${SERVICE_NAME} \
     --project=${PROJECT_ID} \
     --format='value(status.url)' 2>/dev/null)
 
-# Update APP_URL with deployed service URL
-echo -e "${YELLOW}Updating APP_URL with deployed service URL...${NC}"
-gcloud run services update ${SERVICE_NAME} \
-    --region ${REGION} \
-    --update-env-vars "APP_URL=${SERVICE_URL}"
-
-# Health check
-echo -e "${YELLOW}Testing health endpoint...${NC}"
-sleep 5
-if curl -sf "${SERVICE_URL}/health" > /dev/null 2>&1; then
+# Health check (aligned with deploy.yml - 10 second wait)
+echo -e "${YELLOW}Verifying deployment...${NC}"
+echo "Service URL: ${SERVICE_URL}"
+sleep 10
+if curl -f "${SERVICE_URL}/health" > /dev/null 2>&1; then
     echo -e "${GREEN}Health check passed!${NC}"
-elif curl -sf "${SERVICE_URL}/" > /dev/null 2>&1; then
+elif curl -f "${SERVICE_URL}/" > /dev/null 2>&1; then
     echo -e "${GREEN}Service is responding!${NC}"
 else
-    echo -e "${YELLOW}Warning: Health check failed - service may still be starting${NC}"
+    echo -e "${YELLOW}Health check endpoint not available${NC}"
 fi
 
 # Print summary
