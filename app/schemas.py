@@ -29,7 +29,7 @@ MerchantResponse = ShopifyStoreResponse
 
 class OAuthGenerateURL(BaseModel):
     """Schema for generating OAuth authorization URL"""
-    shop_domain: str = Field(..., description="Shopify shop domain (e.g., mystore.myshopify.com)")
+    shop_domain: Optional[str] = Field(None, description="Shopify shop domain (e.g., mystore.myshopify.com). If omitted, Shopify will prompt the merchant to select their store.")
     merchant_id: str = Field(..., description="Unique merchant identifier")
     redirect_uri: str = Field(..., description="Frontend callback URL where Shopify will redirect")
 

@@ -70,7 +70,7 @@ async def generate_oauth_url(oauth_data: OAuthGenerateURL):
     from app.config import settings
     from urllib.parse import urlencode
 
-    shop_domain = sanitize_shop_domain(oauth_data.shop_domain)
+    shop_domain = sanitize_shop_domain(oauth_data.shop_domain) if oauth_data.shop_domain else None
 
     # Build OAuth authorization URL
     params = {
@@ -80,14 +80,19 @@ async def generate_oauth_url(oauth_data: OAuthGenerateURL):
         "state": oauth_data.merchant_id
     }
 
-    auth_url = f"https://{shop_domain}/admin/oauth/authorize?{urlencode(params)}"
+    if shop_domain:
+        # Direct install for a known store
+        auth_url = f"https://{shop_domain}/admin/oauth/authorize?{urlencode(params)}"
+    else:
+        # No store domain — Shopify will prompt the merchant to log in and select their store
+        auth_url = f"https://accounts.shopify.com/oauth/authorize?{urlencode(params)}"
 
-    logger.info(f"[OAuth] Generated authorization URL for merchant: {oauth_data.merchant_id}, shop: {shop_domain}")
+    logger.info(f"[OAuth] Generated authorization URL for merchant: {oauth_data.merchant_id}, shop: {shop_domain or 'unknown (merchant will select)'}")
 
     return {
         "authorization_url": auth_url,
         "merchant_id": oauth_data.merchant_id,
-        "shop_domain": shop_domain
+        "shop_domain": shop_domain or ""
     }
 
 
