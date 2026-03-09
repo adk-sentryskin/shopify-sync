@@ -73,11 +73,13 @@ async def generate_oauth_url(oauth_data: OAuthGenerateURL):
     shop_domain = sanitize_shop_domain(oauth_data.shop_domain) if oauth_data.shop_domain else None
 
     # Build OAuth authorization URL
+    # For accounts.shopify.com flow, Shopify expects response_type=code
     params = {
         "client_id": settings.SHOPIFY_API_KEY,
         "scope": settings.SHOPIFY_SCOPES,
         "redirect_uri": oauth_data.redirect_uri,
-        "state": oauth_data.merchant_id
+        "state": oauth_data.merchant_id,
+        "response_type": "code",
     }
 
     if shop_domain:
