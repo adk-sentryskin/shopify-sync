@@ -171,6 +171,7 @@ async def api_key_middleware(request: Request, call_next):
         "/docs",
         "/redoc",
         "/openapi.json",
+        "/api/oauth/install",  # Shopify App Store install — Shopify calls this directly
     ]
 
     # Shopify webhook paths use HMAC verification instead of API key

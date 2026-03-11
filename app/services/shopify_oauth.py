@@ -2,7 +2,7 @@ import hmac
 import hashlib
 import httpx
 import logging
-from urllib.parse import urlencode, quote
+from urllib.parse import urlencode
 from typing import Dict, Optional
 from app.config import settings
 from app.utils.helpers import sanitize_shop_domain
@@ -63,9 +63,9 @@ class ShopifyOAuth:
         params_copy = params.copy()
         params_copy.pop("hmac", None)
 
-        # Sort and encode parameters (Shopify requires URL encoding of values)
+        # Sort parameters — Shopify requires raw (NOT URL-encoded) key=value pairs
         encoded_params = "&".join(
-            f"{key}={quote(str(value), safe='')}"
+            f"{key}={value}"
             for key, value in sorted(params_copy.items())
         )
 
@@ -135,6 +135,44 @@ class ShopifyOAuth:
             response = await client.get(url, headers=headers)
             response.raise_for_status()
             return response.json()
+
+    async def get_shop_info_graphql(self, shop_domain: str, access_token: str) -> Dict:
+        """
+        Get shop information via Admin GraphQL API.
+        Returns id, name, myshopifyDomain, and primaryDomain.
+        Preferred over REST for post-OAuth shop identity resolution.
+
+        Args:
+            shop_domain: The shop's domain
+            access_token: OAuth access token
+
+        Returns:
+            Dict with shop fields: name, myshopifyDomain, primaryDomain
+        """
+        shop_domain = sanitize_shop_domain(shop_domain)
+        url = f"https://{shop_domain}/admin/api/{self.api_version}/graphql.json"
+        query = """
+        {
+          shop {
+            id
+            name
+            myshopifyDomain
+            primaryDomain {
+              host
+              sslEnabled
+            }
+          }
+        }
+        """
+        headers = {
+            "X-Shopify-Access-Token": access_token,
+            "Content-Type": "application/json",
+        }
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, headers=headers, json={"query": query})
+            response.raise_for_status()
+            data = response.json()
+            return data.get("data", {}).get("shop", {})
 
     async def make_shopify_request(
         self,

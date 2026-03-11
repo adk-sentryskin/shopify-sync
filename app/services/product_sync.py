@@ -1,10 +1,12 @@
 from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy import func
 from typing import Dict, List, Optional
 from datetime import datetime
 import httpx
 import time
+import asyncio
 import logging
 from app.models import Product, ShopifyStore
 from app.config import settings
@@ -54,7 +56,7 @@ def parse_shopify_product(product_data: dict) -> dict:
     }
 
 
-def upsert_product(db: Session, merchant: ShopifyStore, product_data: dict) -> Product:
+def upsert_product(db: Session, merchant: ShopifyStore, product_data: dict, precomputed_embedding: Optional[List] = None) -> Product:
     """Insert or update a single product in the database"""
     parsed_data = parse_shopify_product(product_data)
 
@@ -64,25 +66,29 @@ def upsert_product(db: Session, merchant: ShopifyStore, product_data: dict) -> P
     # Set denormalized merchant_id for fast multi-tenant queries
     parsed_data['merchant_id'] = merchant.merchant_id
 
-    # Generate embedding for semantic search (if enabled)
-    embedding = None
-    if settings.ENABLE_EMBEDDINGS:
+    # Use precomputed embedding if provided, otherwise generate individually
+    embedding = precomputed_embedding
+    if embedding is None and settings.ENABLE_EMBEDDINGS:
         try:
             emb_service = get_embedding_service()
             if emb_service:
-                # Prepare product text for embedding
                 product_text = emb_service.prepare_product_text(product_data)
                 embedding = emb_service.generate_embedding(product_text)
                 if embedding:
-                    parsed_data['embedding'] = embedding
                     logger.debug(f"Generated embedding for product {product_data.get('id')}")
         except Exception as e:
             logger.warning(f"Failed to generate embedding for product {product_data.get('id')}: {e}")
 
+    if embedding:
+        parsed_data['embedding'] = embedding
+
     stmt = insert(Product).values(**parsed_data)
 
-    # Build update dict
+    # Build update dict — includes store_id and merchant_id so ownership
+    # transfers correctly when a shop_domain is reconnected by a different merchant
     update_dict = {
+        'store_id': parsed_data['store_id'],
+        'merchant_id': parsed_data['merchant_id'],
         'title': parsed_data['title'],
         'vendor': parsed_data['vendor'],
         'product_type': parsed_data['product_type'],
@@ -124,6 +130,25 @@ def sync_products(db: Session, merchant: ShopifyStore, products_data: List[dict]
         'failed_count': 0
     }
 
+    # Batch-generate embeddings for all products at once (much faster than one-by-one)
+    embeddings_map = {}
+    if settings.ENABLE_EMBEDDINGS:
+        try:
+            emb_service = get_embedding_service()
+            if emb_service:
+                texts = []
+                product_ids = []
+                for pd in products_data:
+                    texts.append(emb_service.prepare_product_text(pd))
+                    product_ids.append(pd.get('id'))
+                batch_embeddings = emb_service.generate_embeddings_batch(texts)
+                for pid, emb in zip(product_ids, batch_embeddings):
+                    if emb is not None:
+                        embeddings_map[pid] = emb
+                logger.info(f"Batch-generated {len(embeddings_map)}/{len(products_data)} embeddings")
+        except Exception as e:
+            logger.warning(f"Batch embedding generation failed, will try individually: {e}")
+
     for product_data in products_data:
         try:
             existing_product = db.query(Product).filter(
@@ -131,7 +156,8 @@ def sync_products(db: Session, merchant: ShopifyStore, products_data: List[dict]
             ).first()
 
             is_update = existing_product is not None
-            upsert_product(db, merchant, product_data)
+            precomputed = embeddings_map.get(product_data.get('id'))
+            upsert_product(db, merchant, product_data, precomputed_embedding=precomputed)
 
             stats['synced_count'] += 1
             if is_update:
@@ -244,8 +270,7 @@ async def fetch_all_products_from_shopify(
                     break
 
                 since_id = products[-1]['id']
-                await httpx.AsyncClient().aclose()
-                time.sleep(0.5)
+                await asyncio.sleep(0.5)
 
         total_stats['duration_seconds'] = round(time.time() - start_time, 2)
 
