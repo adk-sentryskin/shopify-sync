@@ -70,8 +70,8 @@ async def shopify_install(request: Request):
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid timestamp")
 
-    # Verify Shopify HMAC over the query params
-    if hmac_value and not shopify_oauth.verify_hmac(params):
+    # Verify Shopify HMAC over the query params — fail closed: no HMAC = reject
+    if not hmac_value or not shopify_oauth.verify_hmac(params):
         logger.error(f"[Install] HMAC verification failed for shop: {shop}")
         raise HTTPException(status_code=400, detail="Invalid HMAC signature")
 
