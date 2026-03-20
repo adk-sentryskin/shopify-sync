@@ -173,6 +173,7 @@ async def api_key_middleware(request: Request, call_next):
         "/openapi.json",
         "/api/oauth/install",  # Shopify App Store install — Shopify calls this directly
         "/api/oauth/generate-url",
+        "/api/oauth/lookup",
     ]
 
     # Shopify webhook paths use HMAC verification instead of API key

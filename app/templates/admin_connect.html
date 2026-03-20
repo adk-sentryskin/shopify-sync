@@ -341,6 +341,7 @@
 
   <script>
     const API_BASE = '';  // same origin
+    const BUILDER_BASE = 'https://ai-builder.chekout.ai';
 
     const urlParams = new URLSearchParams(window.location.search);
     const shopParam = urlParams.get('shop') || '';
@@ -361,9 +362,13 @@
       errorMsg.style.display = 'none';
     }
 
-    function showConnected() {
+    function showConnected(merchantId) {
       connectedBanner.style.display = 'flex';
       form.style.display = 'none';
+      const builderUrl = merchantId
+        ? `${BUILDER_BASE}?merchant_id=${encodeURIComponent(merchantId)}`
+        : BUILDER_BASE;
+      openBuilderBtn.href = builderUrl;
       openBuilderBtn.style.display = 'block';
     }
 
@@ -374,23 +379,25 @@
         : 'Connect &amp; Continue to Builder →';
     }
 
-    // Check if already connected when a store name is entered
-    storeNameInput.addEventListener('blur', async () => {
-      const merchantId = storeNameInput.value.trim();
-      if (!merchantId) return;
+    // On page load, check if this shop is already connected
+    async function checkExistingConnection() {
+      if (!shopParam) return;
 
       try {
-        const res = await fetch(`${API_BASE}/api/oauth/status?merchant_id=${encodeURIComponent(merchantId)}`);
+        const res = await fetch(`${API_BASE}/api/oauth/lookup?shop=${encodeURIComponent(shopParam)}`);
         if (res.ok) {
           const data = await res.json();
-          if (data.is_connected || data.is_active) {
-            showConnected();
+          if (data.merchant_id) {
+            storeNameInput.value = data.merchant_id;
+            showConnected(data.merchant_id);
           }
         }
       } catch (_) {
-        // Silently ignore — status check is best-effort
+        // Silently ignore — lookup is best-effort
       }
-    });
+    }
+
+    checkExistingConnection();
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -411,7 +418,7 @@
           body: JSON.stringify({
             shop_domain: shopParam || undefined,
             merchant_id: merchantId,
-            redirect_uri: 'https://ai-builder.chekout.ai/sync/shopify/callback',
+            redirect_uri: `${BUILDER_BASE}/sync/shopify/callback`,
           }),
         });
 

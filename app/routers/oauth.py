@@ -402,6 +402,32 @@ async def complete_oauth(
         )
 
 
+@router.get("/lookup")
+async def lookup_merchant_by_shop(
+    shop: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Public endpoint — look up a merchant by shop domain.
+    Used by the admin connect page on load to detect existing connections.
+    Returns merchant_id if found and active, 404 otherwise.
+    """
+    shop_domain = sanitize_shop_domain(shop)
+    merchant = db.query(ShopifyStore).filter(
+        ShopifyStore.shop_domain == shop_domain,
+        ShopifyStore.is_active == 1
+    ).first()
+
+    if not merchant:
+        raise HTTPException(status_code=404, detail="No active merchant found for this shop")
+
+    return {
+        "merchant_id": merchant.merchant_id,
+        "shop_domain": merchant.shop_domain,
+        "is_active": True
+    }
+
+
 @router.options("/status")
 async def oauth_status_preflight():
     """Handle CORS preflight for OAuth status endpoint"""
