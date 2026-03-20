@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.openapi.utils import get_openapi
 from app.database import engine, Base
-from app.routers import oauth, shopify_data, webhooks, variants, sync
+from app.routers import oauth, shopify_data, webhooks, variants, sync, admin_app
 from app.config import settings
 from app.services.scheduler import start_scheduler, stop_scheduler
 from sqlalchemy import text
@@ -172,6 +172,7 @@ async def api_key_middleware(request: Request, call_next):
         "/redoc",
         "/openapi.json",
         "/api/oauth/install",  # Shopify App Store install — Shopify calls this directly
+        "/api/oauth/generate-url",
     ]
 
     # Shopify webhook paths use HMAC verification instead of API key
@@ -218,22 +219,12 @@ async def api_key_middleware(request: Request, call_next):
     return response
 
 # Include routers
+app.include_router(admin_app.router)  # Must come first — handles GET /
 app.include_router(oauth.router)
 app.include_router(shopify_data.router)
 app.include_router(webhooks.router)
 app.include_router(variants.router)
 app.include_router(sync.router)
-
-
-@app.get("/")
-async def root():
-    return {
-        "service": "Shopify Products API",
-        "version": "1.0.0",
-        "status": "running",
-        "focus": "products_only",
-        "docs": "/docs"
-    }
 
 
 @app.get("/health")

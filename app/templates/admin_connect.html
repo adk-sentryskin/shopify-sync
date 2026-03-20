@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CheckoutAI — Connect Your Store</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f6f6f7;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+      padding: 40px 36px;
+      max-width: 500px;
+      width: 100%;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 28px;
+    }
+
+    .logo-icon {
+      width: 36px;
+      height: 36px;
+      background: #082a3a;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .logo-text {
+      font-size: 18px;
+      font-weight: 700;
+      color: #082a3a;
+    }
+
+    h1 {
+      font-size: 22px;
+      font-weight: 700;
+      color: #1a1a1a;
+      margin-bottom: 8px;
+    }
+
+    .subtitle {
+      font-size: 14px;
+      color: #6b7280;
+      margin-bottom: 28px;
+      line-height: 1.5;
+    }
+
+    /* Steps */
+    .steps {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-bottom: 28px;
+      padding: 20px;
+      background: #f8fafc;
+      border-radius: 10px;
+      border: 1px solid #e5e7eb;
+    }
+
+    .step {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+    }
+
+    .step-num {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: #082a3a;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    .step-num.active {
+      background: #0ea5e9;
+    }
+
+    .step-content strong {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: #111827;
+      margin-bottom: 2px;
+    }
+
+    .step-content p {
+      font-size: 12px;
+      color: #6b7280;
+      line-height: 1.4;
+    }
+
+    /* Connected state */
+    .connected-banner {
+      display: none;
+      align-items: center;
+      gap: 10px;
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin-bottom: 20px;
+    }
+
+    .connected-banner .check {
+      width: 20px;
+      height: 20px;
+      background: #22c55e;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      color: #fff;
+      font-size: 12px;
+    }
+
+    .connected-banner p {
+      font-size: 14px;
+      color: #15803d;
+      font-weight: 500;
+    }
+
+    /* Form */
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: #374151;
+      margin-bottom: 6px;
+    }
+
+    input[type="text"] {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: 14px;
+      color: #111827;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    input[type="text"]:focus {
+      border-color: #082a3a;
+    }
+
+    .field-hint {
+      font-size: 12px;
+      color: #9ca3af;
+      margin-top: 5px;
+    }
+
+    .form-group {
+      margin-bottom: 20px;
+    }
+
+    .btn {
+      width: 100%;
+      padding: 12px;
+      background: #082a3a;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .btn:hover { background: #0f3d54; }
+    .btn:disabled { background: #9ca3af; cursor: not-allowed; }
+
+    .btn-secondary {
+      display: block;
+      text-align: center;
+      margin-top: 12px;
+      padding: 12px;
+      background: transparent;
+      color: #082a3a;
+      border: 1px solid #082a3a;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      text-decoration: none;
+      transition: background 0.15s;
+    }
+
+    .btn-secondary:hover { background: #f0f9ff; }
+
+    .error-msg {
+      display: none;
+      font-size: 13px;
+      color: #dc2626;
+      margin-top: 8px;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(255,255,255,0.4);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .divider {
+      height: 1px;
+      background: #e5e7eb;
+      margin: 24px 0;
+    }
+
+    .already-have {
+      text-align: center;
+      font-size: 13px;
+      color: #9ca3af;
+    }
+
+    .already-have a {
+      color: #082a3a;
+      font-weight: 600;
+      text-decoration: none;
+    }
+
+    .already-have a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">
+      <div class="logo-icon">C</div>
+      <span class="logo-text">CheckoutAI</span>
+    </div>
+
+    <h1>Connect Your Store</h1>
+    <p class="subtitle">Link your Shopify store to your CheckoutAI account to activate your AI chatbot. Here's what happens next:</p>
+
+    <!-- Flow steps -->
+    <div class="steps">
+      <div class="step">
+        <div class="step-num active">1</div>
+        <div class="step-content">
+          <strong>Enter your CheckoutAI store name below</strong>
+          <p>This is the store name you used when signing up at ai-builder.chekout.ai.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-content">
+          <strong>Authorize CheckoutAI on Shopify</strong>
+          <p>You'll be redirected to Shopify to grant CheckoutAI access to your store's products.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-content">
+          <strong>You'll land in the CheckoutAI builder</strong>
+          <p>Your store is now connected. Configure your AI agent and customize its behavior.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-content">
+          <strong>Click "Integrate to Shopify" in the builder</strong>
+          <p>This takes you directly to your Shopify theme editor with the chatbot block already added — no manual setup needed.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Connected state (shown after status check or successful connect) -->
+    <div class="connected-banner" id="connectedBanner">
+      <div class="check">✓</div>
+      <p>Your store is already connected to CheckoutAI.</p>
+    </div>
+
+    <!-- Form -->
+    <form id="connectForm">
+      <div class="form-group">
+        <label for="storeName">Your CheckoutAI Store Name</label>
+        <input
+          type="text"
+          id="storeName"
+          placeholder="e.g., my-store"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <p class="field-hint">Find this in your CheckoutAI dashboard — it's the name you signed up with.</p>
+      </div>
+
+      <p class="error-msg" id="errorMsg"></p>
+
+      <button type="submit" class="btn" id="connectBtn">Connect &amp; Continue to Builder →</button>
+    </form>
+
+    <!-- Open builder link (shown when connected) -->
+    <a
+      href="https://ai-builder.chekout.ai"
+      class="btn-secondary"
+      id="openBuilderBtn"
+      style="display:none"
+      target="_blank"
+    >
+      Open CheckoutAI Builder →
+    </a>
+
+    <div class="divider"></div>
+    <p class="already-have">Don't have a CheckoutAI account? <a href="https://ai-builder.chekout.ai" target="_blank">Sign up free</a></p>
+  </div>
+
+  <script>
+    const API_BASE = '';  // same origin
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const shopParam = urlParams.get('shop') || '';
+
+    const form = document.getElementById('connectForm');
+    const storeNameInput = document.getElementById('storeName');
+    const connectBtn = document.getElementById('connectBtn');
+    const errorMsg = document.getElementById('errorMsg');
+    const connectedBanner = document.getElementById('connectedBanner');
+    const openBuilderBtn = document.getElementById('openBuilderBtn');
+
+    function showError(msg) {
+      errorMsg.textContent = msg;
+      errorMsg.style.display = 'block';
+    }
+
+    function clearError() {
+      errorMsg.style.display = 'none';
+    }
+
+    function showConnected() {
+      connectedBanner.style.display = 'flex';
+      form.style.display = 'none';
+      openBuilderBtn.style.display = 'block';
+    }
+
+    function setLoading(loading) {
+      connectBtn.disabled = loading;
+      connectBtn.innerHTML = loading
+        ? '<span class="spinner"></span>Connecting...'
+        : 'Connect &amp; Continue to Builder →';
+    }
+
+    // Check if already connected when a store name is entered
+    storeNameInput.addEventListener('blur', async () => {
+      const merchantId = storeNameInput.value.trim();
+      if (!merchantId) return;
+
+      try {
+        const res = await fetch(`${API_BASE}/api/oauth/status?merchant_id=${encodeURIComponent(merchantId)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.is_connected || data.is_active) {
+            showConnected();
+          }
+        }
+      } catch (_) {
+        // Silently ignore — status check is best-effort
+      }
+    });
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      clearError();
+
+      const merchantId = storeNameInput.value.trim();
+      if (!merchantId) {
+        showError('Please enter your CheckoutAI store name.');
+        return;
+      }
+
+      setLoading(true);
+
+      try {
+        const res = await fetch(`${API_BASE}/api/oauth/generate-url`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            shop_domain: shopParam || undefined,
+            merchant_id: merchantId,
+            redirect_uri: 'https://ai-builder.chekout.ai/sync/shopify/callback',
+          }),
+        });
+
+        const data = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+          showError(data.detail || data.message || 'Failed to generate connection URL. Please try again.');
+          return;
+        }
+
+        const oauthUrl = data.authorization_url || data.url;
+        if (oauthUrl) {
+          window.top.location.href = oauthUrl;
+        } else {
+          showError('Unexpected response from server. Please try again.');
+        }
+      } catch (err) {
+        showError('Network error. Please check your connection and try again.');
+      } finally {
+        setLoading(false);
+      }
+    });
+  </script>
+</body>
+</html>

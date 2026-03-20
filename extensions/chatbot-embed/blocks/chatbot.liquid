@@ -1,0 +1,18 @@
+{%- assign merchant_id = shop.metafields.chekout_ai.merchant_id.value -%}
+
+{% if merchant_id != blank %}
+  <script
+    src="https://ai-builder.chekout.ai/chatbot.js"
+    data-agent-id="{{ merchant_id }}"
+    data-allow-iframe="true"
+    defer>
+  </script>
+{% endif %}
+
+{% schema %}
+{
+  "name": "CheckoutAI Chatbot",
+  "target": "body",
+  "settings": []
+}
+{% endschema %}

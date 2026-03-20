@@ -348,6 +348,12 @@ async def complete_oauth(
             canonical_domain = shop_domain
             primary_domain = shop_domain
 
+        # Write merchant_id as shop metafield for the Liquid theme extension
+        try:
+            await shopify_oauth.write_merchant_id_metafield(shop_domain, merchant.access_token, merchant.merchant_id)
+        except Exception as meta_error:
+            logger.warning(f"[OAuth Complete] Metafield write failed (non-blocking): {str(meta_error)}")
+
         # Register webhooks (non-blocking - log errors but don't fail OAuth)
         try:
             webhook_results = await register_webhooks(shop_domain, merchant.access_token, db, merchant.id)

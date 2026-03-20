@@ -174,6 +174,42 @@ class ShopifyOAuth:
             data = response.json()
             return data.get("data", {}).get("shop", {})
 
+    async def write_merchant_id_metafield(
+        self,
+        shop_domain: str,
+        access_token: str,
+        merchant_id: str
+    ) -> None:
+        """
+        Write the CheckoutAI merchant_id as a shop metafield so the Liquid
+        theme extension can read it without any extra merchant input.
+        Namespace: chekout_ai  Key: merchant_id
+        """
+        shop_domain = sanitize_shop_domain(shop_domain)
+        url = f"https://{shop_domain}/admin/api/{self.api_version}/metafields.json"
+        headers = {
+            "X-Shopify-Access-Token": access_token,
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "metafield": {
+                "namespace": "chekout_ai",
+                "key": "merchant_id",
+                "value": merchant_id,
+                "type": "single_line_text_field",
+                "owner_resource": "shop",
+            }
+        }
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, headers=headers, json=payload)
+            if response.status_code not in (200, 201):
+                logger.warning(
+                    f"[Metafield] Failed to write merchant_id metafield for {shop_domain}: "
+                    f"{response.status_code} {response.text}"
+                )
+            else:
+                logger.info(f"[Metafield] Wrote merchant_id metafield for {shop_domain}")
+
     async def make_shopify_request(
         self,
         shop_domain: str,

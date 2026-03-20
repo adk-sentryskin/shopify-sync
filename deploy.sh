@@ -36,12 +36,29 @@ echo ""
 # Configuration
 # =============================================================================
 
+# Load local environment variables from .env.local (preferred) or .env
+if [ -f ".env.local" ]; then
+    echo -e "${YELLOW}Loading local overrides from .env.local file...${NC}"
+    while IFS='=' read -r key value; do
+        [[ "$key" =~ ^#.*$ || -z "$key" ]] && continue
+        export "$key=$value"
+    done < <(grep -v '^#' .env.local | grep -v '^$' | sed 's/\r$//')
+elif [ -f ".env" ]; then
+    echo -e "${YELLOW}Loading local overrides from .env file...${NC}"
+    while IFS='=' read -r key value; do
+        [[ "$key" =~ ^#.*$ || -z "$key" ]] && continue
+        export "$key=$value"
+    done < <(grep -v '^#' .env | grep -v '^$' | sed 's/\r$//')
+else
+    echo -e "${YELLOW}Note: No .env file found. Using defaults and Secret Manager for secrets.${NC}"
+fi
+
 PROJECT_ID="${GCP_PROJECT_ID:-shopify-473015}"
 REGION="${GCP_REGION:-us-central1}"
 
 # Environment-specific configuration (aligned with deploy.yml)
 if [ "$ENVIRONMENT" = "development" ]; then
-    SERVICE_NAME="shopify-sync-dev"
+    SERVICE_NAME="${SERVICE_NAME:-shopify-sync-dev}"
     MEMORY="512Mi"
     CPU="1"
     MIN_INSTANCES="0"
@@ -75,16 +92,6 @@ else  # production
 fi
 
 IMAGE_NAME="gcr.io/${PROJECT_ID}/shopify-sync"
-
-# Load local environment variables from .env file (optional, for overrides)
-if [ -f ".env" ]; then
-    echo -e "${YELLOW}Loading local overrides from .env file...${NC}"
-    set -a
-    source <(grep -v '^#' .env | grep -v '^$' | sed 's/\r$//')
-    set +a
-else
-    echo -e "${YELLOW}Note: .env file not found. Using defaults and Secret Manager for secrets.${NC}"
-fi
 
 # =============================================================================
 # Production Confirmation
@@ -137,23 +144,21 @@ echo ""
 # Build Environment Variables (aligned with deploy.yml)
 # =============================================================================
 
-# Environment variables (non-secret values)
-ENV_VARS="ENVIRONMENT=${ENVIRONMENT}"
-ENV_VARS="${ENV_VARS},DEBUG=${DEBUG}"
-ENV_VARS="${ENV_VARS},LOG_LEVEL=${LOG_LEVEL}"
-
-# SHOPIFY_SCOPES may contain commas; escape them for --set-env-vars
-RAW_SCOPES="${SHOPIFY_SCOPES:-read_products,read_orders,read_customers}"
-ESCAPED_SCOPES="${RAW_SCOPES//,/\\,}"
-ENV_VARS="${ENV_VARS},SHOPIFY_SCOPES=${ESCAPED_SCOPES}"
-
-ENV_VARS="${ENV_VARS},SHOPIFY_API_VERSION=${SHOPIFY_API_VERSION:-2024-01}"
-ENV_VARS="${ENV_VARS},ENABLE_SCHEDULER=${ENABLE_SCHEDULER:-true}"
-ENV_VARS="${ENV_VARS},RECONCILIATION_HOUR=${RECONCILIATION_HOUR:-3}"
-ENV_VARS="${ENV_VARS},RECONCILIATION_MINUTE=${RECONCILIATION_MINUTE:-0}"
-ENV_VARS="${ENV_VARS},GCP_PROJECT_ID=${PROJECT_ID}"
-ENV_VARS="${ENV_VARS},GCP_REGION=${REGION}"
-ENV_VARS="${ENV_VARS},ENABLE_EMBEDDINGS=${ENABLE_EMBEDDINGS:-true}"
+# Write env vars to a temp YAML file to avoid escaping issues with commas
+ENV_VARS_FILE=$(mktemp /tmp/cloudrun-env-XXXXXX.yaml)
+cat > "${ENV_VARS_FILE}" <<EOF
+ENVIRONMENT: "${ENVIRONMENT}"
+DEBUG: "${DEBUG}"
+LOG_LEVEL: "${LOG_LEVEL}"
+SHOPIFY_SCOPES: "${SHOPIFY_SCOPES:-read_products}"
+SHOPIFY_API_VERSION: "${SHOPIFY_API_VERSION:-2024-01}"
+ENABLE_SCHEDULER: "${ENABLE_SCHEDULER:-true}"
+RECONCILIATION_HOUR: "${RECONCILIATION_HOUR:-3}"
+RECONCILIATION_MINUTE: "${RECONCILIATION_MINUTE:-0}"
+GCP_PROJECT_ID: "${PROJECT_ID}"
+GCP_REGION: "${REGION}"
+ENABLE_EMBEDDINGS: "${ENABLE_EMBEDDINGS:-true}"
+EOF
 
 # Secrets (using Google Cloud Secret Manager - aligned with deploy.yml)
 SECRETS="DB_DSN=${DB_DSN_SECRET}:latest"
@@ -191,7 +196,7 @@ DEPLOY_CMD="gcloud run deploy ${SERVICE_NAME} \
     --min-instances ${MIN_INSTANCES} \
     --max-instances ${MAX_INSTANCES} \
     --allow-unauthenticated \
-    --set-env-vars ${ENV_VARS} \
+    --env-vars-file "${ENV_VARS_FILE}" \
     --set-secrets ${SECRETS}"
 
 # Add concurrency for production (aligned with deploy.yml)
@@ -201,6 +206,7 @@ fi
 
 # Execute deployment
 eval ${DEPLOY_CMD}
+rm -f "${ENV_VARS_FILE}"
 
 # =============================================================================
 # Post-deployment (aligned with deploy.yml)

@@ -1,0 +1,5 @@
+[[extensions]]
+uid = "a7e4a606-d5cf-4e72-b6fe-4b673b92a0b0"
+type = "theme"
+name = "CheckoutAI Chatbot"
+handle = "chatbot-embed"
