@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CheckoutAI — Connect Your Store</title>
+  <title>ChekoutAI — Connect Your Store</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -261,32 +261,32 @@
   <div class="card">
     <div class="logo">
       <div class="logo-icon">C</div>
-      <span class="logo-text">CheckoutAI</span>
+      <span class="logo-text">ChekoutAI</span>
     </div>
 
     <h1>Connect Your Store</h1>
-    <p class="subtitle">Link your Shopify store to your CheckoutAI account to activate your AI chatbot. Here's what happens next:</p>
+    <p class="subtitle">Link your Shopify store to your ChekoutAI account to activate your AI chatbot. Here's what happens next:</p>
 
     <!-- Flow steps -->
     <div class="steps">
       <div class="step">
         <div class="step-num active">1</div>
         <div class="step-content">
-          <strong>Enter your CheckoutAI store name below</strong>
+          <strong>Enter your ChekoutAI store name below</strong>
           <p>This is the store name you used when signing up at ai-builder.chekout.ai.</p>
         </div>
       </div>
       <div class="step">
         <div class="step-num">2</div>
         <div class="step-content">
-          <strong>Authorize CheckoutAI on Shopify</strong>
-          <p>You'll be redirected to Shopify to grant CheckoutAI access to your store's products.</p>
+          <strong>Authorize ChekoutAI on Shopify</strong>
+          <p>You'll be redirected to Shopify to grant ChekoutAI access to your store's products.</p>
         </div>
       </div>
       <div class="step">
         <div class="step-num">3</div>
         <div class="step-content">
-          <strong>You'll land in the CheckoutAI builder</strong>
+          <strong>You'll land in the ChekoutAI builder</strong>
           <p>Your store is now connected. Configure your AI agent and customize its behavior.</p>
         </div>
       </div>
@@ -302,13 +302,13 @@
     <!-- Connected state (shown after status check or successful connect) -->
     <div class="connected-banner" id="connectedBanner">
       <div class="check">✓</div>
-      <p>Your store is already connected to CheckoutAI.</p>
+      <p>Your store is already connected to ChekoutAI.<br><span id="connectedAgentName" style="font-size:0.85em;opacity:0.8;"></span></p>
     </div>
 
     <!-- Form -->
     <form id="connectForm">
       <div class="form-group">
-        <label for="storeName">Your CheckoutAI Store Name</label>
+        <label for="storeName">Your ChekoutAI Store Name</label>
         <input
           type="text"
           id="storeName"
@@ -316,7 +316,7 @@
           autocomplete="off"
           spellcheck="false"
         />
-        <p class="field-hint">Find this in your CheckoutAI dashboard — it's the name you signed up with.</p>
+        <p class="field-hint">Find this in your ChekoutAI dashboard — it's the name you signed up with.</p>
       </div>
 
       <p class="error-msg" id="errorMsg"></p>
@@ -332,11 +332,11 @@
       style="display:none"
       target="_blank"
     >
-      Open CheckoutAI Builder →
+      Open ChekoutAI Builder →
     </a>
 
     <div class="divider"></div>
-    <p class="already-have">Don't have a CheckoutAI account? <a href="https://ai-builder.chekout.ai" target="_blank">Sign up free</a></p>
+    <p class="already-have">Don't have a ChekoutAI account? <a href="https://ai-builder.chekout.ai" target="_blank">Sign up free</a></p>
   </div>
 
   <script>
@@ -365,6 +365,8 @@
     function showConnected(merchantId) {
       connectedBanner.style.display = 'flex';
       form.style.display = 'none';
+      const agentNameEl = document.getElementById('connectedAgentName');
+      if (agentNameEl && merchantId) agentNameEl.textContent = `Agent: ${merchantId}`;
       const builderUrl = merchantId
         ? `${BUILDER_BASE}?merchant_id=${encodeURIComponent(merchantId)}`
         : BUILDER_BASE;
@@ -403,9 +405,9 @@
       e.preventDefault();
       clearError();
 
-      const merchantId = storeNameInput.value.trim();
+      const merchantId = storeNameInput.value.trim().toLowerCase();
       if (!merchantId) {
-        showError('Please enter your CheckoutAI store name.');
+          showError('Please enter your ChekoutAI store name.');
         return;
       }
 

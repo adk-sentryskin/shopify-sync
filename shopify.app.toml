@@ -3,7 +3,7 @@
 client_id = "4070469388d97b149a6be2a88a05a98c"
 name = "ChekOut AI"
 application_url = "https://shopify-sync-service-staging-vgcxyi5qqa-uc.a.run.app/api/oauth/install"                                                                                         
-embedded = false
+embedded = true
 
 [webhooks]
 api_version = "2025-10"

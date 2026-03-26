@@ -181,7 +181,7 @@ class ShopifyOAuth:
         merchant_id: str
     ) -> None:
         """
-        Write the CheckoutAI merchant_id as a shop metafield so the Liquid
+        Write the ChekoutAI merchant_id as a shop metafield so the Liquid
         theme extension can read it without any extra merchant input.
         Namespace: chekout_ai  Key: merchant_id
         """

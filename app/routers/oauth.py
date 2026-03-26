@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
-from typing import Dict
+from typing import Dict, Optional
 from datetime import datetime, timezone
 from app.database import get_db
 from app.models import ShopifyStore
@@ -13,6 +13,8 @@ from app.middleware.auth import get_merchant_from_header
 from app.utils.helpers import sanitize_shop_domain
 import logging
 import re
+import hmac as hmac_lib
+import hashlib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/oauth", tags=["OAuth"])
@@ -20,6 +22,30 @@ shopify_oauth = ShopifyOAuth()
 
 # Matches *.myshopify.com (with optional path prefix stripped)
 _MYSHOPIFY_RE = re.compile(r"^[a-zA-Z0-9\-]+\.myshopify\.com$")
+
+
+def _create_signed_state(merchant_id: str, secret: str) -> str:
+    """
+    Create a tamper-proof state token by appending an HMAC signature.
+    Format: {merchant_id}:{hex_sig_16chars}
+    Stateless — no storage needed, works across Cloud Run instances.
+    """
+    sig = hmac_lib.new(secret.encode(), merchant_id.encode(), hashlib.sha256).hexdigest()[:16]
+    return f"{merchant_id}:{sig}"
+
+
+def _extract_signed_merchant_id(state: str, secret: str) -> Optional[str]:
+    """
+    Verify the signed state and return the embedded merchant_id.
+    Returns None if the signature is invalid or state is malformed.
+    """
+    if not state or ":" not in state:
+        return None
+    merchant_id, _, sig = state.rpartition(":")
+    expected = hmac_lib.new(secret.encode(), merchant_id.encode(), hashlib.sha256).hexdigest()[:16]
+    if hmac_lib.compare_digest(sig, expected):
+        return merchant_id
+    return None
 
 
 def _is_myshopify_domain(domain: str) -> bool:
@@ -147,11 +173,13 @@ async def generate_oauth_url(oauth_data: OAuthGenerateURL):
 
     # Always use the server-side configured redirect URI — never trust the frontend value.
     # Shopify rejects requests whose redirect_uri doesn't exactly match the allowlist.
+    # state is HMAC-signed so it can't be forged or guessed (CSRF protection).
+    signed_state = _create_signed_state(oauth_data.merchant_id.lower(), settings.SHOPIFY_API_SECRET)
     base_params = {
         "client_id": settings.SHOPIFY_API_KEY,
         "scope": settings.SHOPIFY_SCOPES,
         "redirect_uri": settings.OAUTH_REDIRECT_URL,
-        "state": oauth_data.merchant_id,
+        "state": signed_state,
     }
 
     if shop_domain:
@@ -194,21 +222,29 @@ async def complete_oauth(
     # Resolve merchant_id from the request.
     #
     # Three scenarios:
-    #   1. Dashboard flow: state = merchant_id (set by generate-url)
-    #   2. App Store / Connect button (SaaS user logged in):
+    #   1. Dashboard flow: state = signed "{merchant_id}:{hmac}" token (set by generate-url)
+    #      → verify signature and extract merchant_id
+    #   2. App Store install (SaaS user logged in):
     #      state = shop_domain (set by /install), merchant_id sent by frontend from session
     #   3. Pure App Store install (no SaaS account yet):
     #      state = shop_domain, no merchant_id → use shop domain as temporary ID
-    #
-    # Priority: if state is a shop domain, prefer explicit merchant_id from frontend.
+    from app.config import settings
+
     raw_state = oauth_data.state
     app_store_install = bool(raw_state and _is_myshopify_domain(raw_state))
 
-    if app_store_install and oauth_data.merchant_id:
-        # "Connect Shopify" from SaaS dashboard — frontend passes merchant_id from session
+    # Try to extract merchant_id from a signed dashboard-flow state first
+    signed_merchant_id = _extract_signed_merchant_id(raw_state or "", settings.SHOPIFY_API_SECRET)
+
+    if signed_merchant_id:
+        # Dashboard flow — signature verified, merchant_id is trusted
+        merchant_id = signed_merchant_id
+        app_store_install = False
+    elif app_store_install and oauth_data.merchant_id:
+        # App Store install with SaaS user already logged in
         merchant_id = oauth_data.merchant_id
     elif raw_state:
-        # Dashboard flow (state=merchant_id) or pure App Store (state=shop_domain)
+        # Pure App Store install — state is shop_domain, use as temporary ID
         merchant_id = raw_state
     elif oauth_data.merchant_id:
         merchant_id = oauth_data.merchant_id
@@ -439,3 +475,27 @@ async def check_oauth_status(
 ):
     """Check OAuth status for a merchant"""
     return merchant
+
+
+@router.options("/disconnect")
+async def disconnect_preflight():
+    """Handle CORS preflight for disconnect endpoint"""
+    return {}
+
+
+@router.delete("/disconnect")
+async def disconnect_merchant(
+    merchant: ShopifyStore = Depends(get_merchant_from_header),
+    db: Session = Depends(get_db)
+):
+    """
+    Deactivate a merchant's Shopify connection.
+
+    Called when an agent is deleted from the dashboard so the store
+    no longer appears as connected.
+    """
+    merchant.is_active = 0
+    merchant.access_token = None
+    db.commit()
+    logger.info(f"[Disconnect] Merchant {merchant.merchant_id} deactivated")
+    return {"message": "Disconnected", "merchant_id": merchant.merchant_id}
