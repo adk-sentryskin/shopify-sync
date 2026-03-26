@@ -268,17 +268,6 @@ async def complete_oauth(
         (ShopifyStore.shop_domain == shop_domain)
     ).first()
 
-    # Check for duplicate OAuth completion (prevent replay attacks)
-    if merchant and merchant.is_active == 1 and merchant.access_token:
-        if merchant.updated_at:
-            time_since_last_oauth = (datetime.now(timezone.utc) - merchant.updated_at.replace(tzinfo=timezone.utc)).total_seconds()
-            if time_since_last_oauth < 60:  # Less than 60 seconds ago
-                logger.warning(f"[OAuth Complete] Duplicate OAuth attempt detected for merchant {merchant_id} (last completed {time_since_last_oauth:.1f}s ago)")
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"OAuth was recently completed for this merchant. Please wait before retrying."
-                )
-
     if not merchant:
         # Create new merchant record — shop_domain comes from Shopify's callback
         merchant = ShopifyStore(
@@ -288,40 +277,50 @@ async def complete_oauth(
         db.add(merchant)
         db.flush()
     else:
-        # Update existing record (handles both merchant_id and shop_domain changes)
-        merchant.merchant_id = merchant_id
+        # Update shop_domain if changed. Only update merchant_id if explicitly
+        # provided by the frontend — don't let App Store re-auth flows overwrite
+        # a merchant_id that was set by the SaaS dashboard.
         merchant.shop_domain = shop_domain
+        if not app_store_install and merchant_id:
+            merchant.merchant_id = merchant_id
 
     try:
-        # Exchange code for access token
+        # Try to exchange code for a fresh access token.
+        # If it fails (code already used on re-auth), fall back to existing token.
+        token_exchanged = False
         try:
             token_data = await shopify_oauth.exchange_code_for_token(shop_domain, oauth_data.code)
+            merchant.access_token = token_data.get("access_token")
+            merchant.scope = token_data.get("scope")
+            merchant.is_active = 1
+            token_exchanged = True
         except Exception as token_error:
-            db.rollback()
             error_msg = str(token_error)
-            logger.error(f"[OAuth Complete] Token exchange failed: {error_msg}")
+            logger.warning(f"[OAuth Complete] Token exchange failed: {error_msg}")
 
-            # Detect duplicate/invalid code errors from Shopify
-            if "400" in error_msg or "invalid" in error_msg.lower() or "already" in error_msg.lower():
+            # If we have an existing valid token, this is just a re-auth with a
+            # reused code — return existing data instead of erroring.
+            if merchant and merchant.is_active == 1 and merchant.access_token:
+                logger.info(f"[OAuth Complete] Using existing token for merchant: {merchant.merchant_id}")
+            else:
+                # No existing token to fall back on — genuinely broken
+                db.rollback()
+                if "400" in error_msg or "invalid" in error_msg.lower() or "already" in error_msg.lower():
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Invalid or already used authorization code. Please restart the OAuth flow."
+                    )
                 raise HTTPException(
-                    status_code=400,
-                    detail="Invalid or already used authorization code. Please restart the OAuth flow."
+                    status_code=502,
+                    detail=f"Failed to exchange authorization code with Shopify: {error_msg}"
                 )
-            raise HTTPException(
-                status_code=502,
-                detail=f"Failed to exchange authorization code with Shopify: {error_msg}"
-            )
-
-        # Update merchant with new credentials
-        merchant.access_token = token_data.get("access_token")
-        merchant.scope = token_data.get("scope")
-        merchant.is_active = 1
 
         # Commit the merchant update before proceeding with other operations
         db.commit()
         db.refresh(merchant)
 
-        logger.info(f"[OAuth Complete] Access token obtained for merchant: {merchant_id}")
+        if token_exchanged:
+            logger.info(f"[OAuth Complete] Access token obtained for merchant: {merchant.merchant_id}")
 
         # Get shop info via Admin GraphQL — returns canonical domain, name, primary domain.
         # Preferred over REST; also resolves the real myshopify domain for App Store installs.
@@ -334,14 +333,15 @@ async def complete_oauth(
 
             # For pure App Store installs (no SaaS account), state=shop_domain was
             # used as a temporary merchant_id. Replace it with the canonical domain.
-            # But if the frontend sent a real merchant_id, keep it — the merchant
-            # already has a SaaS account and we don't want to overwrite their ID.
+            # Only do this if the merchant_id still looks like a domain (temporary).
+            # Never overwrite a merchant_id that was explicitly set by the SaaS dashboard.
             if app_store_install and not oauth_data.merchant_id:
-                # Use shop handle (e.g. "cool-store") instead of full domain
-                shop_handle = canonical_domain.replace(".myshopify.com", "")
-                merchant.merchant_id = shop_handle
-                db.commit()
-                db.refresh(merchant)
+                current_mid = merchant.merchant_id or ""
+                if _is_myshopify_domain(current_mid) or current_mid == shop_domain:
+                    shop_handle = canonical_domain.replace(".myshopify.com", "")
+                    merchant.merchant_id = shop_handle
+                    db.commit()
+                    db.refresh(merchant)
         except Exception as shop_error:
             logger.error(f"[OAuth Complete] GraphQL shop info failed: {str(shop_error)}")
             shop_name = shop_domain
@@ -361,21 +361,20 @@ async def complete_oauth(
             logger.error(f"[OAuth Complete] Webhook registration failed: {str(webhook_error)}")
             webhook_results = {"error": "Webhook registration failed, will retry later"}
 
-        # Run initial product sync inline (batch embeddings make this fast ~2-5s)
-        sync_result = {}
-        try:
-            sync_result = await fetch_all_products_from_shopify(
-                db=db,
-                merchant=merchant,
-                shop_domain=shop_domain,
-                access_token=merchant.access_token
+        # Run initial product sync in background — don't block the OAuth response.
+        # For stores with many products this can take 10s+, causing frontend timeouts.
+        if token_exchanged:
+            background_tasks.add_task(
+                initial_product_sync_background,
+                merchant.id,
+                shop_domain,
+                merchant.access_token
             )
-            logger.info(f"[Initial Sync] Completed for {merchant.merchant_id}: {sync_result}")
-        except Exception as sync_error:
-            logger.error(f"[Initial Sync] Failed for {merchant.merchant_id}: {sync_error}")
-            sync_result = {"status": "failed", "error": str(sync_error)}
+            sync_result = {"status": "started_in_background"}
+        else:
+            sync_result = {"status": "skipped", "reason": "re-auth with existing token"}
 
-        logger.info(f"[OAuth Complete] Successfully completed OAuth for merchant: {merchant_id}")
+        logger.info(f"[OAuth Complete] Successfully completed OAuth for merchant: {merchant.merchant_id}")
 
         return {
             "message": "OAuth successful",

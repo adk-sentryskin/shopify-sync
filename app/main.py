@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.openapi.utils import get_openapi
 from app.database import engine, Base
-from app.routers import oauth, shopify_data, webhooks, variants, sync, admin_app
+from app.routers import oauth, shopify_data, webhooks, variants, sync, admin_app, custom_app
 from app.config import settings
 from app.services.scheduler import start_scheduler, stop_scheduler
 from sqlalchemy import text
@@ -226,6 +226,7 @@ app.include_router(shopify_data.router)
 app.include_router(webhooks.router)
 app.include_router(variants.router)
 app.include_router(sync.router)
+app.include_router(custom_app.router)
 
 
 @app.get("/health")
