@@ -58,7 +58,7 @@ REGION="${GCP_REGION:-us-central1}"
 
 # Environment-specific configuration (aligned with deploy.yml)
 if [ "$ENVIRONMENT" = "development" ]; then
-    SERVICE_NAME="${SERVICE_NAME:-shopify-sync-dev}"
+    SERVICE_NAME="${SERVICE_NAME:-shopify-sync-service-staging}"
     MEMORY="512Mi"
     CPU="1"
     MIN_INSTANCES="0"
@@ -145,7 +145,7 @@ echo ""
 # =============================================================================
 
 # Write env vars to a temp YAML file to avoid escaping issues with commas
-ENV_VARS_FILE=$(mktemp /tmp/cloudrun-env-XXXXXX.yaml)
+ENV_VARS_FILE=$(mktemp /tmp/cloudrun-env-XXXXXX).yaml
 cat > "${ENV_VARS_FILE}" <<EOF
 ENVIRONMENT: "${ENVIRONMENT}"
 DEBUG: "${DEBUG}"
