@@ -53,12 +53,18 @@ else
     echo -e "${YELLOW}Note: No .env file found. Using defaults and Secret Manager for secrets.${NC}"
 fi
 
-PROJECT_ID="${GCP_PROJECT_ID:-shopify-473015}"
+ENVIRONMENT="${1:-development}"  # re-assert: .env.local must not override the CLI arg
+if [ "$ENVIRONMENT" = "production" ]; then
+    PROJECT_ID="production-aibuilder"
+else
+    PROJECT_ID="${GCP_PROJECT_ID:-shopify-473015}"
+fi
 REGION="${GCP_REGION:-us-central1}"
+unset SERVICE_NAME  # always set by environment block below, never from .env files
 
-# Environment-specific configuration (aligned with deploy.yml)
+# Environment-specific configuration
 if [ "$ENVIRONMENT" = "development" ]; then
-    SERVICE_NAME="${SERVICE_NAME:-shopify-sync-service-staging}"
+    SERVICE_NAME="shopify-sync-service-staging"
     MEMORY="512Mi"
     CPU="1"
     MIN_INSTANCES="0"
@@ -66,6 +72,7 @@ if [ "$ENVIRONMENT" = "development" ]; then
     LOG_LEVEL="INFO"
     DEBUG="false"
     CONCURRENCY=""
+    CHATBOT_SRC="${CHATBOT_SRC:-https://ai-builder.chekout.ai/chatbot.js}"
     # Secret names for development
     DB_DSN_SECRET="DB_DSN"
     API_KEY_SECRET="API_KEY"
@@ -74,6 +81,7 @@ if [ "$ENVIRONMENT" = "development" ]; then
     OAUTH_REDIRECT_URL_SECRET="OAUTH_REDIRECT_URL"
     APP_URL_SECRET="APP_URL"
 else  # production
+    CHATBOT_SRC="${CHATBOT_SRC:-https://app.chekout.ai/chatbot.js}"
     SERVICE_NAME="shopify-sync"
     MEMORY="1Gi"
     CPU="2"
@@ -158,6 +166,7 @@ RECONCILIATION_MINUTE: "${RECONCILIATION_MINUTE:-0}"
 GCP_PROJECT_ID: "${PROJECT_ID}"
 GCP_REGION: "${REGION}"
 ENABLE_EMBEDDINGS: "${ENABLE_EMBEDDINGS:-true}"
+CHATBOT_SRC: "${CHATBOT_SRC}"
 EOF
 
 # Secrets (using Google Cloud Secret Manager - aligned with deploy.yml)

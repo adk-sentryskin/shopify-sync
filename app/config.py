@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     # If not provided, will be derived from OAUTH_REDIRECT_URL
     APP_URL: Optional[str] = None
 
+    # Chatbot JS URL — written as a shop metafield so the Liquid extension
+    # loads the correct build (staging vs production) without a runtime probe.
+    CHATBOT_SRC: str = "https://ai-builder.chekout.ai/chatbot.js"
+
     # Security - Token Encryption
     # Generate key using: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     ENCRYPTION_KEY: str

@@ -3,8 +3,10 @@ from sqlalchemy.orm import Session
 from typing import Dict, Optional
 from app.database import get_db
 from app.models import ShopifyStore, Product
-from app.middleware.auth import get_merchant_from_header
+from app.middleware.auth import get_merchant_from_header, verify_api_key
 from app.services.product_reconciliation import reconcile_products, force_full_resync
+from app.services.shopify_oauth import ShopifyOAuth
+from app.config import settings
 from app.services.scheduler import (
     get_scheduler_status,
     trigger_manual_reconciliation,
@@ -375,3 +377,41 @@ async def reschedule_job_endpoint(
             status_code=500,
             detail=f"Failed to reschedule job: {str(e)}"
         )
+
+
+@router.post("/migrate-chatbot-src")
+async def migrate_chatbot_src(
+    db: Session = Depends(get_db),
+    _: bool = Depends(verify_api_key),
+):
+    """
+    One-time migration: write chatbot_src metafield to all active merchants
+    so the Liquid extension loads the correct chatbot build without re-auth.
+    """
+    merchants = db.query(ShopifyStore).filter(
+        ShopifyStore.is_active == 1,
+        ShopifyStore._access_token.isnot(None),
+    ).all()
+
+    shopify_oauth = ShopifyOAuth()
+
+    results = {"success": [], "failed": []}
+    for merchant in merchants:
+        try:
+            await shopify_oauth._write_shop_metafield(
+                merchant.shop_domain,
+                merchant.access_token,
+                "chatbot_src",
+                settings.CHATBOT_SRC,
+            )
+            results["success"].append(merchant.merchant_id)
+        except Exception as e:
+            results["failed"].append({"merchant_id": merchant.merchant_id, "error": str(e)})
+
+    return {
+        "chatbot_src": settings.CHATBOT_SRC,
+        "total": len(merchants),
+        "success": len(results["success"]),
+        "failed": len(results["failed"]),
+        "details": results,
+    }

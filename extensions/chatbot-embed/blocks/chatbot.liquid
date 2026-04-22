@@ -1,8 +1,9 @@
 {%- assign merchant_id = shop.metafields.chekout_ai.merchant_id.value -%}
+{%- assign chatbot_src = shop.metafields.chekout_ai.chatbot_src.value | default: 'https://ai-builder.chekout.ai/chatbot.js' -%}
 
 {% if merchant_id != blank %}
   <script
-    src="https://ai-builder.chekout.ai/chatbot.js"
+    src="{{ chatbot_src }}"
     data-agent-id="{{ merchant_id }}"
     data-allow-iframe="true"
     defer>

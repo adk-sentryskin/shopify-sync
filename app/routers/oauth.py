@@ -11,6 +11,7 @@ from app.services.webhook_manager import register_webhooks
 from app.services.product_sync import fetch_all_products_from_shopify
 from app.middleware.auth import get_merchant_from_header
 from app.utils.helpers import sanitize_shop_domain
+from app.config import settings
 import logging
 import re
 import hmac as hmac_lib
@@ -386,7 +387,7 @@ async def complete_oauth(
 
         # Write merchant_id as shop metafield for the Liquid theme extension
         try:
-            await shopify_oauth.write_merchant_id_metafield(shop_domain, merchant.access_token, merchant.merchant_id)
+            await shopify_oauth.write_merchant_id_metafield(shop_domain, merchant.access_token, merchant.merchant_id, settings.CHATBOT_SRC)
         except Exception as meta_error:
             logger.warning(f"[OAuth Complete] Metafield write failed (non-blocking): {str(meta_error)}")
 

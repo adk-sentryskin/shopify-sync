@@ -174,18 +174,13 @@ class ShopifyOAuth:
             data = response.json()
             return data.get("data", {}).get("shop", {})
 
-    async def write_merchant_id_metafield(
+    async def _write_shop_metafield(
         self,
         shop_domain: str,
         access_token: str,
-        merchant_id: str
+        key: str,
+        value: str,
     ) -> None:
-        """
-        Write the ChekoutAI merchant_id as a shop metafield so the Liquid
-        theme extension can read it without any extra merchant input.
-        Namespace: chekout_ai  Key: merchant_id
-        """
-        shop_domain = sanitize_shop_domain(shop_domain)
         url = f"https://{shop_domain}/admin/api/{self.api_version}/metafields.json"
         headers = {
             "X-Shopify-Access-Token": access_token,
@@ -194,8 +189,8 @@ class ShopifyOAuth:
         payload = {
             "metafield": {
                 "namespace": "chekout_ai",
-                "key": "merchant_id",
-                "value": merchant_id,
+                "key": key,
+                "value": value,
                 "type": "single_line_text_field",
                 "owner_resource": "shop",
             }
@@ -204,11 +199,26 @@ class ShopifyOAuth:
             response = await client.post(url, headers=headers, json=payload)
             if response.status_code not in (200, 201):
                 logger.warning(
-                    f"[Metafield] Failed to write merchant_id metafield for {shop_domain}: "
+                    f"[Metafield] Failed to write {key} for {shop_domain}: "
                     f"{response.status_code} {response.text}"
                 )
             else:
-                logger.info(f"[Metafield] Wrote merchant_id metafield for {shop_domain}")
+                logger.info(f"[Metafield] Wrote {key} for {shop_domain}")
+
+    async def write_merchant_id_metafield(
+        self,
+        shop_domain: str,
+        access_token: str,
+        merchant_id: str,
+        chatbot_src: str = "https://ai-builder.chekout.ai/chatbot.js",
+    ) -> None:
+        """
+        Write merchant_id and chatbot_src as shop metafields so the Liquid
+        theme extension can load the correct chatbot build for this environment.
+        """
+        shop_domain = sanitize_shop_domain(shop_domain)
+        await self._write_shop_metafield(shop_domain, access_token, "merchant_id", merchant_id)
+        await self._write_shop_metafield(shop_domain, access_token, "chatbot_src", chatbot_src)
 
     async def make_shopify_request(
         self,
