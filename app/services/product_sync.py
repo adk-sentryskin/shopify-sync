@@ -1,6 +1,5 @@
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import Session
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy import func
 from typing import Dict, List, Optional
 from datetime import datetime
@@ -82,41 +81,25 @@ def upsert_product(db: Session, merchant: ShopifyStore, product_data: dict, prec
     if embedding:
         parsed_data['embedding'] = embedding
 
-    stmt = insert(Product).values(**parsed_data)
+    try:
+        product = db.query(Product).filter(
+            Product.shopify_product_id == parsed_data['shopify_product_id']
+        ).first()
 
-    # Build update dict — includes store_id and merchant_id so ownership
-    # transfers correctly when a shop_domain is reconnected by a different merchant
-    update_dict = {
-        'store_id': parsed_data['store_id'],
-        'merchant_id': parsed_data['merchant_id'],
-        'title': parsed_data['title'],
-        'vendor': parsed_data['vendor'],
-        'product_type': parsed_data['product_type'],
-        'handle': parsed_data['handle'],
-        'status': parsed_data['status'],
-        'shopify_created_at': parsed_data['shopify_created_at'],
-        'shopify_updated_at': parsed_data['shopify_updated_at'],
-        'published_at': parsed_data['published_at'],
-        'raw_data': parsed_data['raw_data'],
-        'synced_at': func.now(),
-        'updated_at': func.now()
-    }
+        if product is None:
+            product = Product(**parsed_data)
+            db.add(product)
+        else:
+            # Update all fields — includes store_id/merchant_id so ownership
+            # transfers correctly when a shop reconnects under a different merchant
+            for key, val in parsed_data.items():
+                setattr(product, key, val)
 
-    # Add embedding to update if it was generated
-    if embedding:
-        update_dict['embedding'] = embedding
-
-    stmt = stmt.on_conflict_do_update(
-        index_elements=['shopify_product_id'],
-        set_=update_dict
-    )
-
-    db.execute(stmt)
-    db.commit()
-
-    product = db.query(Product).filter(
-        Product.shopify_product_id == parsed_data['shopify_product_id']
-    ).first()
+        db.commit()
+        db.refresh(product)
+    except Exception:
+        db.rollback()
+        raise
 
     return product
 
@@ -168,6 +151,7 @@ def sync_products(db: Session, merchant: ShopifyStore, products_data: List[dict]
         except Exception as e:
             stats['failed_count'] += 1
             logger.error(f"Error syncing product {product_data.get('id')}: {str(e)}")
+            db.rollback()
             continue
 
     return stats

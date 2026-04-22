@@ -23,6 +23,19 @@ with engine.connect() as conn:
 # Create database tables
 Base.metadata.create_all(bind=engine)
 
+# Ensure unique constraint on shopify_product_id exists — create_all won't add
+# this to an existing table if it was missing from the original schema.
+with engine.connect() as conn:
+    try:
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_products_shopify_product_id "
+            "ON shopify_sync.products (shopify_product_id)"
+        ))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logger.warning(f"Could not ensure products unique index (may already exist): {e}")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
