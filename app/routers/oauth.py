@@ -175,7 +175,7 @@ async def generate_oauth_url(oauth_data: OAuthGenerateURL):
     # Always use the server-side configured redirect URI — never trust the frontend value.
     # Shopify rejects requests whose redirect_uri doesn't exactly match the allowlist.
     # state is HMAC-signed so it can't be forged or guessed (CSRF protection).
-    signed_state = _create_signed_state(oauth_data.merchant_id.lower(), settings.SHOPIFY_API_SECRET)
+    signed_state = _create_signed_state(oauth_data.merchant_id, settings.SHOPIFY_API_SECRET)
     base_params = {
         "client_id": settings.SHOPIFY_API_KEY,
         "scope": settings.SHOPIFY_SCOPES,

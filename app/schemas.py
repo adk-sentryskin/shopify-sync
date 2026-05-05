@@ -1,6 +1,11 @@
-from pydantic import BaseModel, Field
+import re
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from datetime import datetime
+
+
+def _slugify_merchant_id(value: str) -> str:
+    return re.sub(r'\s+', '-', value.strip().lower())
 
 
 class ShopifyStoreBase(BaseModel):
@@ -32,6 +37,11 @@ class OAuthGenerateURL(BaseModel):
     shop_domain: Optional[str] = Field(None, description="Shopify shop domain (e.g., mystore.myshopify.com). If omitted, Shopify will prompt the merchant to select their store.")
     merchant_id: str = Field(..., description="Unique merchant identifier")
     redirect_uri: Optional[str] = Field(None, description="Ignored — backend always uses OAUTH_REDIRECT_URL from config")
+
+    @field_validator('merchant_id', mode='before')
+    @classmethod
+    def normalize_merchant_id(cls, v: str) -> str:
+        return _slugify_merchant_id(v)
 
 
 class OAuthComplete(BaseModel):

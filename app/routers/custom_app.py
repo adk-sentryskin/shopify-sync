@@ -6,9 +6,10 @@ Admin API access token (created in Shopify Admin > Settings > Apps > Develop app
 No OAuth dance required — the merchant pastes their token and we pull everything.
 """
 
+import re
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from app.database import get_db
 from app.models import ShopifyStore
@@ -30,6 +31,11 @@ class CustomAppConnect(BaseModel):
     merchant_id: str = Field(..., description="Unique merchant identifier (e.g. 'pacific-soul')")
     shop_domain: str = Field(..., description="Shopify store domain (e.g. 'mystore.myshopify.com')")
     admin_access_token: str = Field(..., description="Admin API access token from Shopify Custom App")
+
+    @field_validator('merchant_id', mode='before')
+    @classmethod
+    def normalize_merchant_id(cls, v: str) -> str:
+        return re.sub(r'\s+', '-', v.strip().lower())
 
 
 class CustomAppResponse(BaseModel):

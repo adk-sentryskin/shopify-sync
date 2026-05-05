@@ -18,7 +18,9 @@ _embedding_service = None
 
 
 def get_embedding_service():
-    """Lazy load embedding service to avoid import errors if not configured"""
+    """Lazy load embedding service. Retries on every call so a transient
+    failure (IAM propagation delay, cold start) doesn't permanently disable
+    embeddings for the lifetime of this instance."""
     global _embedding_service
     if _embedding_service is None and settings.ENABLE_EMBEDDINGS:
         try:
@@ -27,8 +29,7 @@ def get_embedding_service():
             logger.info("✅ Embedding service initialized")
         except Exception as e:
             logger.warning(f"⚠️ Embedding service not available: {e}")
-            _embedding_service = False  # Mark as unavailable
-    return _embedding_service if _embedding_service is not False else None
+    return _embedding_service
 
 
 def parse_shopify_product(product_data: dict) -> dict:

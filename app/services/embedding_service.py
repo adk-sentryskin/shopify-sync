@@ -154,23 +154,16 @@ class EmbeddingService:
         """
         Prepare product text for embedding generation.
 
-        Combines title, description, product type, vendor, and tags
+        Combines title, type, vendor, variant options, tags, and description
         into a single text optimized for semantic search.
-
-        Args:
-            product_data: Shopify product JSON
-
-        Returns:
-            Combined text string
         """
+        import re
         parts = []
 
-        # Title (most important)
         title = product_data.get('title', '').strip()
         if title:
             parts.append(f"Title: {title}")
 
-        # Product type and vendor
         product_type = product_data.get('product_type', '').strip()
         if product_type:
             parts.append(f"Type: {product_type}")
@@ -179,28 +172,33 @@ class EmbeddingService:
         if vendor:
             parts.append(f"Brand: {vendor}")
 
-        # Tags
+        # Named variant options from the top-level options array — deduplicated
+        # and labeled (e.g. "Color: Red, Blue, Green" / "Size: S, M, L").
+        # This is more informative than iterating individual variant option1/2/3.
+        for opt in product_data.get('options', []):
+            name = opt.get('name', '').strip()
+            values = [
+                v.strip() for v in opt.get('values', [])
+                if v.strip() and v.strip().lower() != 'default title'
+            ]
+            if name and values and name.lower() != 'title':
+                parts.append(f"{name}: {', '.join(values)}")
+
         tags = product_data.get('tags', '')
         if tags:
             tags_list = [t.strip() for t in tags.split(',') if t.strip()]
             if tags_list:
                 parts.append(f"Tags: {', '.join(tags_list)}")
 
-        # Description (can be long, so add last)
         description = product_data.get('body_html', '') or product_data.get('description', '')
         if description:
-            # Strip HTML tags (basic)
-            import re
+            import html as html_module
             description = re.sub(r'<[^>]+>', '', description)
-            description = description.strip()
+            description = html_module.unescape(description).strip()
             if description:
-                # Limit description length
                 parts.append(f"Description: {description[:1000]}")
 
-        # Combine all parts
         combined_text = "\n".join(parts)
-
-        # Final length check
         if len(combined_text) > 20000:
             combined_text = combined_text[:20000]
 
