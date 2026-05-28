@@ -15,9 +15,10 @@ from app.config import settings
 from app.database import get_db
 from app.models import ShopifyStore
 from app.services.shopify_oauth import ShopifyOAuth
+from app.services.order_persistence import backfill_attributed_orders
 from app.services.product_sync import fetch_all_products_from_shopify
 from app.services.webhook_manager import register_webhooks
-from app.utils.helpers import sanitize_shop_domain
+from app.utils.helpers import has_scope, sanitize_shop_domain
 import logging
 import re
 
@@ -153,6 +154,12 @@ async def connect_custom_app(
         access_token,
     )
 
+    # If the merchant granted read_orders, kick off a one-time backfill of the
+    # last 60 days of attributed orders. Backfill is gated on the *actual*
+    # granted scopes — merchants without it skip this step entirely.
+    if has_scope(granted_scopes, "read_orders"):
+        background_tasks.add_task(_background_order_backfill, merchant.id)
+
     return CustomAppResponse(
         message="Shopify store connected successfully. Product sync started in background.",
         merchant_id=data.merchant_id,
@@ -198,6 +205,25 @@ async def get_sync_status(
         "products_with_embeddings": has_embeddings,
         "sync_complete": product_count > 0 and product_count == has_embeddings,
     }
+
+
+async def _background_order_backfill(store_id: int):
+    """Background task: backfill the last 60 days of attributed orders."""
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        merchant = db.query(ShopifyStore).filter(ShopifyStore.id == store_id).first()
+        if not merchant:
+            logger.error(f"[Order Backfill] Store {store_id} not found")
+            return
+        logger.info(f"[Order Backfill] Starting for {merchant.merchant_id}")
+        result = await backfill_attributed_orders(db, merchant)
+        logger.info(f"[Order Backfill] Completed for {merchant.merchant_id}: {result}")
+    except Exception as e:
+        logger.error(f"[Order Backfill] Error: {e}", exc_info=True)
+    finally:
+        db.close()
 
 
 async def _background_product_sync(

@@ -117,6 +117,30 @@ async def shopify_install(request: Request):
     return RedirectResponse(url=auth_url, status_code=302)
 
 
+async def _oauth_order_backfill_background(store_id: int):
+    """
+    Backfill the last 60 days of agent-attributed orders for a merchant who
+    just granted read_orders. Runs as a FastAPI background task so the OAuth
+    callback returns immediately.
+    """
+    from app.database import SessionLocal
+    from app.services.order_persistence import backfill_attributed_orders
+
+    db = SessionLocal()
+    try:
+        merchant = db.query(ShopifyStore).filter(ShopifyStore.id == store_id).first()
+        if not merchant:
+            logger.error(f"[Order Backfill] Store {store_id} not found")
+            return
+        logger.info(f"[Order Backfill] Starting for {merchant.merchant_id}")
+        result = await backfill_attributed_orders(db, merchant)
+        logger.info(f"[Order Backfill] Result: {result}")
+    except Exception as e:
+        logger.error(f"[Order Backfill] Error: {e}", exc_info=True)
+    finally:
+        db.close()
+
+
 async def initial_product_sync_background(
     merchant_id: int,
     shop_domain: str,
@@ -410,6 +434,13 @@ async def complete_oauth(
             sync_result = {"status": "started_in_background"}
         else:
             sync_result = {"status": "skipped", "reason": "re-auth with existing token"}
+
+        # If the merchant just granted read_orders (new grant, not re-auth),
+        # backfill the last 60 days of attributed orders. Gated on the real
+        # scope set returned by Shopify, so merchants who didn't opt in skip.
+        from app.utils.helpers import has_scope
+        if token_exchanged and has_scope(merchant.scope, "read_orders"):
+            background_tasks.add_task(_oauth_order_backfill_background, merchant.id)
 
         logger.info(f"[OAuth Complete] Successfully completed OAuth for merchant: {merchant.merchant_id}")
 

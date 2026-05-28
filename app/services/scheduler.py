@@ -13,6 +13,7 @@ import asyncio
 from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models import ShopifyStore
+from app.services.order_persistence import prune_orders
 from app.services.product_reconciliation import reconcile_products
 import logging
 
@@ -124,11 +125,33 @@ async def run_daily_reconciliation_for_all_merchants():
         db.close()
 
 
+async def run_daily_order_prune():
+    """
+    Delete agent-attributed orders older than the retention period (60 days)
+    across all merchants. Enforces the Protected Customer Data attestation:
+    raw order rows are retained for 60 days and then pruned.
+
+    Runs once per day; the cost is a single bulk DELETE so it's fine to share
+    a session.
+    """
+    logger.info("[Scheduler] Starting daily order prune")
+    db = SessionLocal()
+    try:
+        deleted = prune_orders(db)
+        logger.info(f"[Scheduler] Daily order prune complete: {deleted} rows deleted")
+    except Exception as e:
+        logger.error(f"[Scheduler] Daily order prune failed: {str(e)}")
+    finally:
+        db.close()
+
+
 def start_scheduler():
     """
-    Start the APScheduler with daily reconciliation job
+    Start the APScheduler with daily reconciliation + order prune jobs.
 
-    Runs reconciliation every day at 2 AM UTC
+    - Reconciliation runs at 2:00 AM UTC (product catalog drift check).
+    - Order prune runs at 3:00 AM UTC (60-day rolling delete for the
+      attributed orders table, matching the PCD retention attestation).
     """
     global scheduler
 
@@ -148,8 +171,21 @@ def start_scheduler():
         max_instances=1  # Only one instance running at a time
     )
 
+    # Add daily order prune (runs at 3 AM UTC, after reconciliation finishes)
+    scheduler.add_job(
+        run_daily_order_prune,
+        trigger=CronTrigger(hour=3, minute=0, timezone='UTC'),
+        id='daily_order_prune',
+        name='Daily Order Retention Prune (60-day)',
+        replace_existing=True,
+        max_instances=1,
+    )
+
     scheduler.start()
-    logger.info("[Scheduler] Started - Daily reconciliation scheduled for 2:00 AM UTC")
+    logger.info(
+        "[Scheduler] Started — Daily reconciliation at 2:00 AM UTC, "
+        "order prune at 3:00 AM UTC"
+    )
 
     return scheduler
 

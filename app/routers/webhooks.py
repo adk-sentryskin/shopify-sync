@@ -5,6 +5,10 @@ from datetime import datetime, timezone
 import json
 from app.database import get_db
 from app.models import ShopifyStore, Product
+from app.services.order_persistence import (
+    delete_orders_for_merchant,
+    upsert_order,
+)
 from app.services.product_sync import upsert_product
 from app.utils.webhook_verification import verify_webhook, extract_shop_domain, extract_webhook_topic
 from app.services.webhook_manager import register_webhooks, list_webhooks, delete_webhook, sync_webhooks
@@ -232,6 +236,111 @@ async def product_delete_webhook(
         )
 
 
+async def _handle_order_event(
+    webhook_data: dict,
+    db: Session,
+    event_type: str,
+) -> dict:
+    """
+    Shared handler for orders/create, orders/updated, orders/cancelled.
+
+    Persists the order in shopify_sync.orders ONLY if it carries agent
+    attribution attributes (`_chekout_ai_*`). Non-attributed orders are
+    silently acknowledged with a 200 — we don't want to store anything we
+    don't have a use for, and Shopify still expects a success ack.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    shop_domain = webhook_data["shop_domain"]
+    try:
+        order_data = json.loads(webhook_data["body"])
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
+
+    merchant = db.query(ShopifyStore).filter(
+        ShopifyStore.shop_domain == shop_domain,
+        ShopifyStore.is_active == 1,
+    ).first()
+    if not merchant:
+        # Returning 200 here would silently swallow rogue webhooks. We log and
+        # 404 so the operator notices state drift, and Shopify will retry —
+        # but only the topic-level handlers can decide that. For now: 404.
+        raise HTTPException(
+            status_code=404,
+            detail=f"ShopifyStore not found for shop: {shop_domain}",
+        )
+
+    persisted = upsert_order(db, merchant, order_data, event_type=event_type)
+    if persisted is None:
+        logger.info(
+            f"[Order {event_type}] {merchant.merchant_id}: order "
+            f"{order_data.get('id')} not agent-attributed, skipped"
+        )
+        return {
+            "status": "success",
+            "attributed": False,
+            "order_id": order_data.get("id"),
+            "shop_domain": shop_domain,
+        }
+
+    return {
+        "status": "success",
+        "attributed": True,
+        "order_id": persisted.shopify_order_id,
+        "shop_domain": shop_domain,
+        "event_type": event_type,
+    }
+
+
+@router.post("/orders/create")
+async def order_create_webhook(
+    request: Request,
+    db: Session = Depends(get_db),
+    webhook_data: dict = Depends(verify_shopify_webhook),
+):
+    """
+    Handle Shopify orders/create webhook. Requires read_orders on the merchant;
+    subscription itself is gated by webhook_manager.has_scope check.
+    """
+    try:
+        return await _handle_order_event(webhook_data, db, event_type="create")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to process orders/create: {str(e)}")
+
+
+@router.post("/orders/updated")
+async def order_updated_webhook(
+    request: Request,
+    db: Session = Depends(get_db),
+    webhook_data: dict = Depends(verify_shopify_webhook),
+):
+    """Handle Shopify orders/updated webhook (refunds, status changes, etc.)."""
+    try:
+        return await _handle_order_event(webhook_data, db, event_type="update")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to process orders/updated: {str(e)}")
+
+
+@router.post("/orders/cancelled")
+async def order_cancelled_webhook(
+    request: Request,
+    db: Session = Depends(get_db),
+    webhook_data: dict = Depends(verify_shopify_webhook),
+):
+    """Handle Shopify orders/cancelled webhook."""
+    try:
+        return await _handle_order_event(webhook_data, db, event_type="cancel")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to process orders/cancelled: {str(e)}")
+
+
 @router.post("/compliance")
 async def compliance_webhook_router(
     request: Request,
@@ -304,19 +413,28 @@ async def compliance_webhook_router(
             customer_id = request_data.get('customer', {}).get('id')
             customer_email = request_data.get('customer', {}).get('email')
             orders_to_redact = request_data.get('orders_to_redact', [])
-            
+
             logger.info(f"[GDPR] Customer redact request received from shop: {shop_domain}")
             logger.info(f"[GDPR] Customer to redact: id={customer_id}, email={customer_email}, orders={orders_to_redact}")
-            
+
             merchant = db.query(ShopifyStore).filter(
                 ShopifyStore.shop_domain == shop_domain
             ).first()
-            
+
             if merchant:
                 logger.info(f"[GDPR] Processing redact for merchant_id: {merchant.merchant_id}")
-                # TODO: Delete customer data and associated orders within 30 days
-                # This app primarily stores product data, not customer data
-            
+                # We don't store customer PII (Level 1 attestation). The only
+                # customer-linked records we hold are agent-attributed orders
+                # via shopify_order_id; delete any that match the redact list.
+                from app.models import Order
+                if orders_to_redact:
+                    deleted = db.query(Order).filter(
+                        Order.shopify_order_id.in_(orders_to_redact),
+                        Order.store_id == merchant.id,
+                    ).delete(synchronize_session=False)
+                    db.commit()
+                    logger.info(f"[GDPR] Deleted {deleted} orders for customer redact")
+
             # Acknowledge receipt - Shopify expects 200 response
             return {
                 "status": "success",
@@ -338,7 +456,7 @@ async def compliance_webhook_router(
             if merchant:
                 from app.models import Product, Webhook
                 logger.info(f"[GDPR] Marking merchant as inactive and clearing data: {merchant.merchant_id}")
-                
+
                 # Soft delete products associated with this merchant
                 products_deleted = db.query(Product).filter(
                     Product.merchant_id == merchant.id
@@ -347,18 +465,25 @@ async def compliance_webhook_router(
                     "status": "redacted",
                     "deleted_at": datetime.now(timezone.utc)
                 })
-                
+
+                # Hard-delete attributed orders — no soft-delete pattern here,
+                # the PCD attestation says we erase order data on uninstall.
+                orders_deleted = delete_orders_for_merchant(db, merchant.id)
+
                 # Mark webhooks as inactive
                 db.query(Webhook).filter(
                     Webhook.store_id == merchant.id
                 ).update({"is_active": 0})
-                
+
                 # Mark merchant as inactive and clear sensitive data
                 merchant.is_active = 0
                 merchant.access_token = None  # Clear the access token
                 db.commit()
-                
-                logger.info(f"[GDPR] Shop redact complete: {products_deleted} products marked as redacted")
+
+                logger.info(
+                    f"[GDPR] Shop redact complete: {products_deleted} products marked as redacted, "
+                    f"{orders_deleted} orders deleted"
+                )
             
             # Acknowledge receipt - Shopify expects 200 response
             return {
@@ -472,9 +597,10 @@ async def customers_redact_webhook(
 
         customer_id = request_data.get('customer', {}).get('id')
         customer_email = request_data.get('customer', {}).get('email')
+        orders_to_redact = request_data.get('orders_to_redact', [])
 
         logger.info(f"[GDPR] Customer redact request received from shop: {shop_domain}")
-        logger.info(f"[GDPR] Customer to redact: id={customer_id}, email={customer_email}")
+        logger.info(f"[GDPR] Customer to redact: id={customer_id}, email={customer_email}, orders={orders_to_redact}")
 
         # Find merchant by shop domain
         merchant = db.query(ShopifyStore).filter(
@@ -483,8 +609,17 @@ async def customers_redact_webhook(
 
         if merchant:
             logger.info(f"[GDPR] Processing redact for merchant_id: {merchant.merchant_id}")
-            # This app primarily stores product data, not customer data
-            # If you store customer data, delete it here
+            # We don't store customer PII; the only customer-linked records
+            # are agent-attributed orders. Delete any that match the redact
+            # list (Shopify provides the list of order IDs to redact).
+            from app.models import Order
+            if orders_to_redact:
+                deleted = db.query(Order).filter(
+                    Order.shopify_order_id.in_(orders_to_redact),
+                    Order.store_id == merchant.id,
+                ).delete(synchronize_session=False)
+                db.commit()
+                logger.info(f"[GDPR] Deleted {deleted} orders for customer redact")
 
         # Acknowledge receipt - Shopify expects a 200 response
         return {
@@ -548,6 +683,10 @@ async def shop_redact_webhook(
                 "deleted_at": datetime.now(timezone.utc)
             })
 
+            # Hard-delete attributed orders — PCD attestation says we erase
+            # order data on uninstall.
+            orders_deleted = delete_orders_for_merchant(db, merchant.id)
+
             # Mark webhooks as inactive
             from app.models import Webhook
             db.query(Webhook).filter(
@@ -560,7 +699,10 @@ async def shop_redact_webhook(
 
             db.commit()
 
-            logger.info(f"[GDPR] Shop redact complete: {products_deleted} products marked as redacted")
+            logger.info(
+                f"[GDPR] Shop redact complete: {products_deleted} products marked as redacted, "
+                f"{orders_deleted} orders deleted"
+            )
 
         # Acknowledge receipt - Shopify expects a 200 response
         return {

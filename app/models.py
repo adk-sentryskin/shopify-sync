@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text, BigInteger, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, Text, BigInteger, ForeignKey, Numeric
 from sqlalchemy.sql import func
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import relationship
@@ -102,6 +102,71 @@ class Product(Base):
 
     def __repr__(self):
         return f"<Product(shopify_product_id={self.shopify_product_id}, merchant_id={self.merchant_id}, title={self.title})>"
+
+
+class Order(Base):
+    """
+    Agent-attributed Shopify orders.
+
+    Source of truth for the sales-attribution dashboard. PII-free by design
+    (no customer name / email / phone / address) per the Protected Customer
+    Data Level 1 attestation. A scheduled prune job deletes rows older than
+    60 days to match the retention period attested to with Shopify.
+    """
+    __tablename__ = "orders"
+    __table_args__ = {'schema': 'shopify_sync'}
+
+    # Primary key
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # Shopify identifier (globally unique across Shopify)
+    shopify_order_id = Column(BigInteger, unique=True, index=True, nullable=False)
+    order_name = Column(String(50))  # e.g. "#1001"
+
+    # Multi-tenant identifiers (matches the products-table pattern)
+    store_id = Column(Integer, ForeignKey('shopify_sync.shopify_stores.id'), nullable=False)
+    merchant_id = Column(String(255), nullable=False, index=True)
+    shop_domain = Column(String(255), nullable=False)
+
+    # Shopify timestamps
+    shopify_created_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    shopify_updated_at = Column(DateTime(timezone=True))
+
+    # Agent-attribution keys (extracted from order.note_attributes at ingest).
+    # chekout_ai_session is the JOIN key with chatbot conversation data.
+    chekout_ai_session = Column(String(255), index=True)
+    chekout_ai_agent = Column(String(255))
+    chekout_ai_source = Column(String(100))
+
+    # Order body — PII-free
+    line_items = Column(JSONB)
+    discount_codes = Column(JSONB)
+    total_price = Column(Numeric(12, 2))
+    currency = Column(String(10))
+    financial_status = Column(String(50))
+    source_name = Column(String(100))
+    cart_token = Column(String(255))
+
+    # Full attribution attrs (kept for forensics / future-key tolerance)
+    note_attributes_raw = Column(JSONB)
+
+    # Provenance: which event last upserted this row.
+    # 'backfill' | 'create' | 'update' | 'cancel'
+    last_event_type = Column(String(20), nullable=False)
+
+    # Local timestamps
+    ingested_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    # Relationship
+    store = relationship("ShopifyStore", backref="orders", foreign_keys=[store_id])
+
+    def __repr__(self):
+        return (
+            f"<Order(shopify_order_id={self.shopify_order_id}, "
+            f"merchant_id={self.merchant_id}, name={self.order_name})>"
+        )
 
 
 class Webhook(Base):

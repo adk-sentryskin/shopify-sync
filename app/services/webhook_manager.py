@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from app.config import settings
 from app.models import Webhook, ShopifyStore
-from app.utils.helpers import sanitize_shop_domain
+from app.utils.helpers import has_scope, sanitize_shop_domain
 
 
 WEBHOOK_CONFIG = [
@@ -42,6 +42,29 @@ WEBHOOK_CONFIG = [
 ]
 
 
+# Order webhooks — only subscribed for merchants who've actually granted
+# read_orders. Shopify refuses to register a topic whose required scope the
+# token doesn't hold, so we gate the registration on the merchant's stored
+# scope set rather than letting the create-webhook call fail.
+ORDERS_WEBHOOK_CONFIG = [
+    {
+        "topic": "orders/create",
+        "address": "{app_url}/api/webhooks/orders/create",
+        "format": "json"
+    },
+    {
+        "topic": "orders/updated",
+        "address": "{app_url}/api/webhooks/orders/updated",
+        "format": "json"
+    },
+    {
+        "topic": "orders/cancelled",
+        "address": "{app_url}/api/webhooks/orders/cancelled",
+        "format": "json"
+    },
+]
+
+
 async def register_webhooks(shop_domain: str, access_token: str, db: Session, merchant_id: int) -> List[Dict]:
     """
     Register webhooks for a shop after OAuth installation
@@ -72,7 +95,14 @@ async def register_webhooks(shop_domain: str, access_token: str, db: Session, me
     # Get the app URL from settings
     app_url = getattr(settings, 'APP_URL', settings.OAUTH_REDIRECT_URL.rsplit('/api/', 1)[0])
 
-    for webhook_config in WEBHOOK_CONFIG:
+    # Build the full topic list: always-on webhooks + order webhooks if the
+    # merchant has granted read_orders. Order topics require the scope at
+    # subscription time; without it Shopify returns 401 on the create call.
+    topics_to_register = list(WEBHOOK_CONFIG)
+    if has_scope(store.scope, "read_orders"):
+        topics_to_register.extend(ORDERS_WEBHOOK_CONFIG)
+
+    for webhook_config in topics_to_register:
         try:
             # Format the webhook address with actual app URL
             webhook = {
