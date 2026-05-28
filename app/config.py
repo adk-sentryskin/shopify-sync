@@ -24,7 +24,20 @@ class Settings(BaseSettings):
     SHOPIFY_API_KEY: str
     SHOPIFY_API_SECRET: str
     SHOPIFY_API_VERSION: str = "2025-10"
-    SHOPIFY_SCOPES: str = "read_inventory,read_product_listings,read_products"
+    # Required scopes — always requested at OAuth. These are all read-only,
+    # contain no protected customer data, and require NO Shopify review.
+    SHOPIFY_SCOPES: str = (
+        "read_inventory,read_product_listings,read_products,"
+        "read_price_rules,read_discounts,read_gift_cards,"
+        "read_legal_policies,read_shipping,read_content"
+    )
+    # Optional scopes — declared but NOT requested in the default OAuth flow.
+    # read_orders accesses protected customer data and requires Shopify's
+    # Protected Customer Data review before it can be granted, so it's kept
+    # out of the required set to avoid forcing re-consent / blocking installs.
+    # Requested per-merchant only after approval; order-reading code is gated
+    # on the merchant's actual granted scopes (see utils.helpers.has_scope).
+    SHOPIFY_OPTIONAL_SCOPES: str = "read_orders"
 
     # Application (optional - have sensible defaults)
     APP_HOST: str = "0.0.0.0"

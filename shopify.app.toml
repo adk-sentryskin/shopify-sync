@@ -14,7 +14,11 @@ uri = "https://shopify-sync-579388332064.us-central1.run.app/api/webhooks/compli
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "read_inventory,read_product_listings,read_products"
+# Required scopes: read-only, no protected customer data, no Shopify review needed.
+scopes = "read_inventory,read_product_listings,read_products,read_price_rules,read_discounts,read_gift_cards,read_legal_policies,read_shipping,read_content"
+# Optional scopes: read_orders will be added here in step 2, after we've
+# verified the benign-scope deploy lands cleanly. Kept out of step 1 so the
+# only surface change Shopify sees is the 9 benign read scopes.
 optional_scopes = [ ]
 use_legacy_install_flow = false
 

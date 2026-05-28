@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional
+from app.config import settings
 from app.database import get_db
 from app.models import ShopifyStore
 from app.services.shopify_oauth import ShopifyOAuth
@@ -60,7 +61,13 @@ async def connect_custom_app(
     The merchant creates a Custom App in Shopify Admin:
       Settings > Apps > Develop apps > Create an app > Configure Admin API scopes
 
-    Required scopes: read_products, read_inventory, read_product_listings
+    Required scopes (read-only, no review): read_products, read_inventory,
+    read_product_listings, read_price_rules, read_discounts, read_gift_cards,
+    read_legal_policies, read_shipping, read_content.
+    Optional: read_orders (for agent order-attribution; protected customer data).
+
+    Whatever the merchant actually grants is read back from Shopify and stored
+    on the merchant record — we don't assume a fixed scope set.
 
     This endpoint:
       1. Validates the token against Shopify's API
@@ -98,6 +105,15 @@ async def connect_custom_app(
 
     logger.info(f"[Custom App] Token validated for {shop_domain} — shop: {shop_name}")
 
+    # Read the scopes the merchant actually granted to this token, so the
+    # scope gate (has_scope) reflects reality. Fall back to the configured
+    # required set if the lookup fails (shouldn't block the connection).
+    try:
+        granted_scopes = await shopify_oauth.get_access_scopes(shop_domain, access_token)
+    except Exception as e:
+        logger.warning(f"[Custom App] Could not read access scopes for {shop_domain}: {e}")
+        granted_scopes = settings.SHOPIFY_SCOPES
+
     # Upsert store record
     merchant = db.query(ShopifyStore).filter(
         (ShopifyStore.merchant_id == data.merchant_id) |
@@ -108,7 +124,7 @@ async def connect_custom_app(
         merchant.merchant_id = data.merchant_id
         merchant.shop_domain = shop_domain
         merchant.access_token = access_token
-        merchant.scope = "read_products,read_inventory,read_product_listings"
+        merchant.scope = granted_scopes
         merchant.is_active = 1
     else:
         merchant = ShopifyStore(
@@ -116,7 +132,7 @@ async def connect_custom_app(
             shop_domain=shop_domain,
         )
         merchant.access_token = access_token
-        merchant.scope = "read_products,read_inventory,read_product_listings"
+        merchant.scope = granted_scopes
         merchant.is_active = 1
         db.add(merchant)
 

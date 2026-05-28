@@ -112,6 +112,27 @@ class ShopifyOAuth:
             response.raise_for_status()
             return response.json()
 
+    async def get_access_scopes(self, shop_domain: str, access_token: str) -> str:
+        """
+        Return the scopes actually granted to this access token, as a
+        comma-separated string (e.g. "read_products,read_orders").
+
+        Works for both OAuth and Custom App tokens via the standard
+        /admin/oauth/access_scopes.json endpoint. Used so we store the
+        merchant's real granted scopes rather than a hardcoded assumption —
+        the scope gate (utils.helpers.has_scope) depends on this being accurate.
+        """
+        shop_domain = sanitize_shop_domain(shop_domain)
+        url = f"https://{shop_domain}/admin/oauth/access_scopes.json"
+        headers = {"X-Shopify-Access-Token": access_token}
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+        handles = [s.get("handle") for s in data.get("access_scopes", []) if s.get("handle")]
+        return ",".join(handles)
+
     async def get_shop_info(self, shop_domain: str, access_token: str) -> Dict:
         """
         Get shop information using the access token
