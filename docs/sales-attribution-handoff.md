@@ -1,8 +1,8 @@
 # Sales Attribution — Handoff & Resume Doc
 
-**Last updated:** 2026-05-29
+**Last updated:** 2026-06-10
 **Owner:** namit
-**Status:** In flight — backend persistence shipped; awaiting Shopify PCD review; dashboard CTA + BigQuery export still to build.
+**Status:** In flight — backend persistence shipped; **dashboard sales-attribution UI shipped to production 2026-06-10 (Track 2)**; awaiting Shopify PCD review; BigQuery export (Track 3) still to build. One frontend polish item tabled — see "Deferred to next build".
 
 ---
 
@@ -19,7 +19,7 @@ The build is **phased** to keep existing merchants unbroken and to gate the most
 | 3 | Backend Postgres persistence for attributed orders | ✅ **shipped** (migration applied, code deployed) |
 | 3.5 | Cart-attribute stamping in `chatbot.js` | ✅ **shipped** (commit `d22f151`) |
 | — | Shopify PCD Level 1 review | ⏳ **awaiting Shopify** (submitted 2026-05-28) |
-| 4 | Dashboard "Sales attribution" CTA + revenue widgets + Sankey extension | 🔲 not started |
+| 4 | Dashboard "Sales attribution" CTA + revenue widgets + Sankey extension | ✅ **shipped 2026-06-10** — CTA, Total Revenue + AOV tiles, product breakdown, funnel "Purchased" stage |
 | 5 | BigQuery export pipeline (Postgres → BQ → Databricks) | 🔲 blocked on BQ table creation |
 | 6 | Flip `read_orders` from optional → required + scope-drift auto-redirect | 🔲 not started (post-PCD-approval) |
 
@@ -56,7 +56,7 @@ The fix: when the agent adds to cart, also stamp the cart with `_chekout_ai_sess
 ### Frontend state (`chekoutai-frontend`)
 
 - `public/chatbot.js` already stamps cart attributes on every Shopify add-to-cart (commit `d22f151`). Fire-and-forget; can't break add-to-cart.
-- No dashboard surface for sales attribution yet — Track 2 work.
+- **Dashboard sales-attribution UI shipped 2026-06-10** (Track 2 — see that section for what landed). One follow-up tabled: "Deferred to next build".
 
 ### PCD review
 
@@ -107,9 +107,19 @@ Decisions that aren't obvious from the code — written down so future-you/me do
 
 ## Open tracks — pick up here
 
-### Track 2 — Dashboard "Sales attribution" CTA + widgets
+### Track 2 — Dashboard "Sales attribution" CTA + widgets ✅ SHIPPED 2026-06-10
 
 Repo: `chekoutai-frontend` (Next.js)
+
+**Shipped to production 2026-06-10** (Cloud Run `nextjs` + Firebase Hosting, `app.chekout.ai`):
+- `POST /api/oauth/upgrade-scopes` (shipped in `shopify-sync`, rev `shopify-sync-00018-bvd`) builds the optional-scope grant URL.
+- `lib/attribution.ts` — shared scope-status + summary fetch, currency/AOV helpers, attributed-orders fetch + `aggregateTopProducts` / `countPaidOrdersInRange`.
+- `SalesAttribution` card — CTA when ungranted; KPIs + **Top products purchased** breakdown when granted.
+- `TopMetrics` — real attributed revenue + **Average Order Value** tile (replaced cost-per-consumer); count-up tickers.
+- `ConversionFunnel` — **Purchased** stage from date-range paid attributed orders (clamped to nest under Add to Cart; label shows true count).
+- Fixed an auth-token race (`getFirebaseIdToken` now waits for Firebase's first auth-state resolution) that 401'd the dashboard fetch on hard-refresh.
+
+Frontend commits on `chekoutai-frontend@main`: `99f80a8`, `9ba7af0`, `731ee2b`, `c5a8d53`, `ae6149d`. Original to-build notes below kept for reference.
 
 **Backend (one small new endpoint in `shopify-sync`):**
 - `POST /api/oauth/upgrade-scopes?merchant_id=...` — builds the OAuth authorize URL for that merchant with `read_orders` appended to the existing scope set. Returns the URL. Frontend redirects to it; Shopify's standard consent screen renders; on return, the existing `/api/oauth/complete` flow already updates `merchant.scope`.
@@ -287,6 +297,30 @@ curl -sS -H "X-API-Key: $API_KEY" -H "X-Merchant-Id: <merchant>" \
 ```
 
 (Note: the merchant header is `X-Merchant-Id`, despite the error message saying `X-ShopifyStore-Id`. See "Known issues" below.)
+
+---
+
+## Deferred to next build
+
+Intentionally tabled — not blockers, scoped for the next frontend build.
+
+### Hold Revenue + AOV tiles until attribution resolves (frontend)
+
+**Added:** 2026-06-10.
+
+**What:** On the dashboard, the **Total Revenue** and **Average Order Value** tiles fall back to the GA4 estimate (`dashboardData.total_revenue`) while the attribution fetch is still in flight, then glide to the real Postgres-backed attributed numbers once `/api/orders/attribution-summary` resolves. For a *granted* merchant this briefly shows the fallback figure before settling on the attributed value.
+
+**Desired:** keep just those two tiles in their skeleton/loading state until attribution has resolved, so there's no fallback flash — the number appears once and counts up a single time.
+
+**Where:** `chekoutai-frontend` → `components/Dashboard/TopMetrics/TopMetrics.tsx`. It already receives the `attribution` prop (which has `.loading`). Pass `isLoading={loading || attribution?.loading}` to the **Total Revenue** and **Average Order Value** `<MetricCard>`s only. `MetricCard` already renders a skeleton for `isLoading`.
+
+**Watch outs:**
+- Do **not** gate Total Conversations / Active Sessions on attribution — they come from the base dashboard fetch and have nothing to do with `read_orders`.
+- Gate on `attribution.loading`, **not** `granted`: for ungranted merchants `attribution.loading` flips false once scope-status resolves (granted:false), so those tiles correctly fall through to the GA estimate as they do today.
+
+**Acceptance:** granted-merchant hard-refresh → Revenue + AOV show skeleton until the attributed number is ready, then count up once (no fallback flash); Conversations/Active Sessions unaffected.
+
+**Effort:** ~15 min, frontend-only. Ship in the next `./deploy.production.sh` for the frontend.
 
 ---
 
