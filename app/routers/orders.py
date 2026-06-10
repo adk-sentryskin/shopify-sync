@@ -10,7 +10,7 @@ the scope get a clean 403 rather than a Shopify API error.
 """
 
 from decimal import Decimal
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -19,6 +19,10 @@ from app.database import get_db
 from app.models import Order, ShopifyStore
 from app.middleware.auth import get_merchant_from_header
 from app.services.order_attribution import REQUIRED_SCOPE
+from app.services.scope_reconciliation import (
+    provision_order_access_background,
+    reconcile_scopes_from_shopify,
+)
 from app.utils.helpers import has_scope
 
 router = APIRouter(prefix="/api/orders", tags=["Orders"])
@@ -39,7 +43,9 @@ def _ensure_scope(merchant: ShopifyStore) -> None:
 
 @router.get("/scope-status")
 async def order_scope_status(
+    background_tasks: BackgroundTasks,
     merchant: ShopifyStore = Depends(get_merchant_from_header),
+    db: Session = Depends(get_db),
 ):
     """
     Report whether this merchant has granted the sales-attribution scope.
@@ -47,10 +53,25 @@ async def order_scope_status(
     Drives the dashboard CTA: if not granted, show the "Enable sales
     attribution" prompt; if granted, render the attribution widgets.
 
+    Self-healing reconcile: when our stored scope doesn't yet include
+    read_orders, re-read the real granted scopes from Shopify. The managed-
+    install optional-scopes grant never hits /oauth/complete, so this is how
+    the dashboard learns the merchant just enabled it (the frontend polls this
+    endpoint after redirecting them through the grant URL). On first sight of
+    read_orders we provision order access (webhooks + 60-day backfill) in the
+    background.
+
     Headers:
         - X-ShopifyStore-Id: ShopifyStore identifier (required)
     """
     granted = has_scope(merchant.scope, REQUIRED_SCOPE)
+
+    if not granted:
+        _changed, newly_granted = await reconcile_scopes_from_shopify(db, merchant)
+        if newly_granted:
+            background_tasks.add_task(provision_order_access_background, merchant.id)
+        granted = has_scope(merchant.scope, REQUIRED_SCOPE)
+
     return {
         "merchant_id": merchant.merchant_id,
         "required_scope": REQUIRED_SCOPE,

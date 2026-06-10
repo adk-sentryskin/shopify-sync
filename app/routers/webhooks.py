@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, HTTPException, Depends, Header, Query
+from fastapi import APIRouter, Request, HTTPException, Depends, Header, Query, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import Optional
 from datetime import datetime, timezone
@@ -10,6 +10,10 @@ from app.services.order_persistence import (
     upsert_order,
 )
 from app.services.product_sync import upsert_product
+from app.services.scope_reconciliation import (
+    apply_scope_update,
+    provision_order_access_background,
+)
 from app.utils.webhook_verification import verify_webhook, extract_shop_domain, extract_webhook_topic
 from app.services.webhook_manager import register_webhooks, list_webhooks, delete_webhook, sync_webhooks
 
@@ -339,6 +343,59 @@ async def order_cancelled_webhook(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process orders/cancelled: {str(e)}")
+
+
+@router.post("/app/scopes_update")
+async def app_scopes_update_webhook(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    webhook_data: dict = Depends(verify_shopify_webhook),
+):
+    """
+    Handle Shopify app/scopes_update webhook.
+
+    Fires when a merchant grants or revokes access scopes — notably when they
+    enable the optional read_orders scope via the managed-install flow, which
+    does NOT hit /oauth/complete. Payload carries the full current scope set,
+    so we update merchant.scope directly (no Shopify round-trip) and, the first
+    time read_orders appears, provision order access (webhooks + backfill).
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    shop_domain = webhook_data["shop_domain"]
+    try:
+        payload = json.loads(webhook_data["body"])
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
+
+    # Payload `current` is the list of scope handles now granted. Tolerate both
+    # an array and a comma-separated string for safety across API versions.
+    current = payload.get("current", [])
+    if isinstance(current, str):
+        current = current.split(",")
+
+    merchant = db.query(ShopifyStore).filter(
+        ShopifyStore.shop_domain == shop_domain,
+        ShopifyStore.is_active == 1,
+    ).first()
+
+    if not merchant:
+        logger.warning(f"[Scopes Update] No active merchant for shop: {shop_domain}")
+        return {"status": "success", "message": "No matching merchant", "shop_domain": shop_domain}
+
+    _changed, newly_granted = apply_scope_update(db, merchant, current)
+    if newly_granted:
+        logger.info(f"[Scopes Update] read_orders newly granted for {merchant.merchant_id} — provisioning")
+        background_tasks.add_task(provision_order_access_background, merchant.id)
+
+    return {
+        "status": "success",
+        "shop_domain": shop_domain,
+        "merchant_id": merchant.merchant_id,
+        "read_orders_newly_granted": newly_granted,
+    }
 
 
 @router.post("/compliance")

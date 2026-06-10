@@ -38,6 +38,15 @@ WEBHOOK_CONFIG = [
         "topic": "shop/redact",
         "address": "{app_url}/api/webhooks/shop/redact",
         "format": "json"
+    },
+    # Fired when the merchant grants or revokes scopes (e.g. enabling the
+    # optional read_orders scope via the managed-install flow). No scope
+    # required to subscribe. Lets us update merchant.scope and provision order
+    # access without waiting for the dashboard to poll scope-status.
+    {
+        "topic": "app/scopes_update",
+        "address": "{app_url}/api/webhooks/app/scopes_update",
+        "format": "json"
     }
 ]
 

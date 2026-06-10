@@ -110,6 +110,10 @@ def custom_openapi():
         "/api/webhooks/products/create",
         "/api/webhooks/products/update",
         "/api/webhooks/products/delete",
+        "/api/webhooks/orders/create",
+        "/api/webhooks/orders/updated",
+        "/api/webhooks/orders/cancelled",
+        "/api/webhooks/app/scopes_update",
         "/api/webhooks/compliance",  # Single endpoint for all compliance webhooks
         "/api/webhooks/customers/data_request",
         "/api/webhooks/customers/redact",
@@ -194,6 +198,10 @@ async def api_key_middleware(request: Request, call_next):
         "/api/webhooks/products/create",
         "/api/webhooks/products/update",
         "/api/webhooks/products/delete",
+        "/api/webhooks/orders/create",
+        "/api/webhooks/orders/updated",
+        "/api/webhooks/orders/cancelled",
+        "/api/webhooks/app/scopes_update",
         "/api/webhooks/compliance",  # Single endpoint for all compliance webhooks
         "/api/webhooks/customers/data_request",
         "/api/webhooks/customers/redact",

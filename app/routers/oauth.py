@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request, Query
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from typing import Dict, Optional
@@ -221,6 +221,88 @@ async def generate_oauth_url(oauth_data: OAuthGenerateURL):
         "authorization_url": auth_url,
         "merchant_id": oauth_data.merchant_id,
         "shop_domain": shop_domain or ""
+    }
+
+
+@router.options("/upgrade-scopes")
+async def upgrade_scopes_preflight():
+    """Handle CORS preflight for the scope-upgrade endpoint"""
+    return {}
+
+
+@router.post("/upgrade-scopes", response_model=Dict[str, str])
+async def upgrade_scopes(
+    merchant_id: str = Query(..., description="merchant_id of an already-connected store"),
+    db: Session = Depends(get_db),
+):
+    """
+    Build the URL that prompts an already-connected merchant to grant the
+    optional, PCD-gated scope(s) (currently read_orders) on top of the scopes
+    they approved at install.
+
+    IMPORTANT: this app uses Shopify-managed installation
+    (use_legacy_install_flow = false). In that mode the legacy
+    /admin/oauth/authorize?scope=... endpoint IGNORES any extra scope appended
+    to the query — Shopify only grants what's declared in the app config. So
+    optional scopes MUST be requested via the managed-install optional-scopes
+    URL instead:
+
+        https://admin.shopify.com/store/{store_handle}/oauth/install
+            ?client_id={client_id}&optional_scopes={comma_separated_scopes}
+
+    `optional_scopes` must be a subset of the `optional_scopes` declared in
+    shopify.app.toml. Shopify shows the merchant a grant modal for just these
+    scopes; on approval the grant is recorded against the existing app
+    installation (the stored offline token automatically gains access — no
+    re-exchange). The grant does NOT hit /complete, so the dashboard must
+    reconcile afterwards (poll /api/orders/scope-status, which re-reads the
+    real granted scopes from Shopify and fires the backfill on first sight of
+    read_orders).
+
+    Drives the dashboard "Enable sales attribution" CTA: the frontend calls
+    this, then redirects the merchant to the returned URL.
+    """
+    from app.config import settings
+    from urllib.parse import urlencode
+
+    merchant = db.query(ShopifyStore).filter(
+        ShopifyStore.merchant_id == merchant_id,
+        ShopifyStore.is_active == 1,
+    ).first()
+
+    if not merchant or not merchant.shop_domain:
+        raise HTTPException(
+            status_code=404,
+            detail="No active connected store found for this merchant_id",
+        )
+
+    if not settings.SHOPIFY_OPTIONAL_SCOPES:
+        raise HTTPException(
+            status_code=400,
+            detail="No optional scopes are configured to request",
+        )
+
+    # Managed-install optional-scopes request URL. The store handle is the
+    # myshopify subdomain (admin.shopify.com routes by handle, not full domain).
+    store_handle = sanitize_shop_domain(merchant.shop_domain).replace(".myshopify.com", "")
+    optional_scopes = settings.SHOPIFY_OPTIONAL_SCOPES.replace(" ", "")
+    install_url = (
+        f"https://admin.shopify.com/store/{store_handle}/oauth/install?"
+        + urlencode({
+            "client_id": settings.SHOPIFY_API_KEY,
+            "optional_scopes": optional_scopes,
+        })
+    )
+
+    logger.info(
+        f"[Scope Upgrade] Built optional-scopes ({optional_scopes}) request URL "
+        f"for merchant: {merchant_id}, store: {store_handle}"
+    )
+
+    return {
+        "authorization_url": install_url,
+        "merchant_id": merchant_id,
+        "shop_domain": merchant.shop_domain,
     }
 
 
