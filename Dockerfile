@@ -18,5 +18,9 @@ COPY . .
 # Expose port
 EXPOSE 8000
 
-# Run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Datadog APM — serverless-init wrapper (Cloud Run has no host agent).
+COPY --from=datadog/serverless-init:1 /datadog-init /app/datadog-init
+ENTRYPOINT ["/app/datadog-init"]
+
+# Run the application under ddtrace-run for distributed tracing.
+CMD ["ddtrace-run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

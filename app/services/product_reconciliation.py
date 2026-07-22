@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from typing import Dict, List
+from typing import Dict, List, Optional
 from datetime import datetime, timezone
 import httpx
 import time
@@ -108,13 +108,18 @@ async def reconcile_products(
         results['missing_in_db'] = len(missing_in_db)
         results['missing_in_db_product_ids'] = list(missing_in_db)
 
-        # Sync missing products
+        # Sync missing products — fetch FULL data first (the comparison fetch is
+        # skinny; upserting it would wipe status/variants).
         for product_id in missing_in_db:
             try:
-                upsert_product(db, merchant, shopify_product_map[product_id])
+                full = await fetch_single_product_full(shop_domain, access_token, product_id)
+                if full is None:
+                    logger.warning(f"Skipping missing product {product_id}: could not fetch full data")
+                    continue
+                upsert_product(db, merchant, full)
                 results['synced_count'] += 1
             except Exception as e:
-                print(f"Error syncing missing product {product_id}: {str(e)}")
+                logger.error(f"Error syncing missing product {product_id}: {str(e)}")
 
         # Step 4: Find products deleted in Shopify
         deleted_in_shopify = db_product_ids - shopify_product_ids
@@ -158,12 +163,17 @@ async def reconcile_products(
                         if time_diff > 1:  # More than 1 second difference
                             out_of_sync.append(product_id)
 
-                            # Re-sync the product
+                            # Re-sync the product with FULL data (the comparison
+                            # fetch is skinny; upserting it would wipe status/variants).
                             try:
-                                upsert_product(db, merchant, shopify_product)
-                                results['synced_count'] += 1
+                                full = await fetch_single_product_full(shop_domain, access_token, product_id)
+                                if full is None:
+                                    logger.warning(f"Skipping out-of-sync product {product_id}: could not fetch full data")
+                                else:
+                                    upsert_product(db, merchant, full)
+                                    results['synced_count'] += 1
                             except Exception as e:
-                                print(f"Error re-syncing product {product_id}: {str(e)}")
+                                logger.error(f"Error re-syncing product {product_id}: {str(e)}")
 
                 except (ValueError, AttributeError) as e:
                     print(f"Error parsing timestamp for product {product_id}: {str(e)}")
@@ -194,6 +204,33 @@ async def reconcile_products(
         results['duration_seconds'] = round(time.time() - start_time, 2)
         print(f"Error in product reconciliation: {str(e)}")
         return results
+
+
+async def fetch_single_product_full(
+    shop_domain: str,
+    access_token: str,
+    product_id,
+) -> Optional[Dict]:
+    """Fetch the COMPLETE product (status, variants, all fields) for one product.
+
+    Reconciliation compares with a skinny fetch (id/title/updated_at) for speed,
+    but a product that needs syncing must be upserted with its FULL data —
+    upserting the skinny dict would wipe status to NULL and destroy variants.
+    """
+    shop_domain = sanitize_shop_domain(shop_domain)
+    url = f"https://{shop_domain}/admin/api/{settings.SHOPIFY_API_VERSION}/products/{product_id}.json"
+    headers = {
+        'X-Shopify-Access-Token': access_token,
+        'Content-Type': 'application/json',
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+            return response.json().get('product')
+    except Exception as e:
+        logger.error(f"Failed to fetch full product {product_id}: {str(e)}")
+        return None
 
 
 async def fetch_all_products_from_shopify_for_reconciliation(
