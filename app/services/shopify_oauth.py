@@ -1,3 +1,4 @@
+import asyncio
 import hmac
 import hashlib
 import httpx
@@ -8,6 +9,52 @@ from app.config import settings
 from app.utils.helpers import sanitize_shop_domain
 
 logger = logging.getLogger(__name__)
+
+# Transient-failure policy for Shopify Admin API calls.
+#
+# Every client in this module used to be a bare httpx.AsyncClient(): httpx's own
+# defaults and no retry at all, so one dropped connection became a 500 to the
+# caller (seen in production as httpx.ReadError on
+# /admin/api/2025-10/products/{id}.json). 30s matches the timeout the rest of the
+# codebase already passes explicitly — product_sync, webhook_manager and
+# product_reconciliation all use httpx.AsyncClient(timeout=30.0).
+SHOPIFY_TIMEOUT = httpx.Timeout(30.0, connect=10.0)
+MAX_ATTEMPTS = 3
+BACKOFF_BASE_SECONDS = 0.5
+
+# Failures raised before the request could reach Shopify. Replaying these can
+# never duplicate a side effect, whatever the HTTP method.
+_PRE_SEND_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
+
+
+async def _send_with_retry(send, method: str, url: str, idempotent: bool):
+    """
+    Run `send` (a zero-arg coroutine factory) with bounded exponential backoff.
+
+    A read-phase error means Shopify may already have applied the request, so
+    those are only replayed when the call is idempotent. Everything else retries
+    solely on `_PRE_SEND_ERRORS`, which keeps a token exchange or a metafield
+    write from being silently issued twice. The final failure is re-raised
+    unchanged so existing callers keep seeing the same exception type.
+    """
+    retryable = httpx.TransportError if idempotent else _PRE_SEND_ERRORS
+
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            return await send()
+        except retryable as exc:
+            if attempt == MAX_ATTEMPTS:
+                logger.error(
+                    "[Shopify] %s %s failed after %d attempts: %s",
+                    method, url, MAX_ATTEMPTS, type(exc).__name__,
+                )
+                raise
+            delay = BACKOFF_BASE_SECONDS * (2 ** (attempt - 1))
+            logger.warning(
+                "[Shopify] %s %s attempt %d/%d failed (%s); retrying in %.1fs",
+                method, url, attempt, MAX_ATTEMPTS, type(exc).__name__, delay,
+            )
+            await asyncio.sleep(delay)
 
 
 class ShopifyOAuth:
@@ -107,8 +154,12 @@ class ShopifyOAuth:
             "code": code
         }
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(url, json=payload)
+        async with httpx.AsyncClient(timeout=SHOPIFY_TIMEOUT) as client:
+            # Not idempotent: an authorization code is single-use, so a replayed
+            # POST would fail rather than yield a second token.
+            response = await _send_with_retry(
+                lambda: client.post(url, json=payload), "POST", url, idempotent=False
+            )
             response.raise_for_status()
             return response.json()
 
@@ -126,8 +177,10 @@ class ShopifyOAuth:
         url = f"https://{shop_domain}/admin/oauth/access_scopes.json"
         headers = {"X-Shopify-Access-Token": access_token}
 
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, headers=headers)
+        async with httpx.AsyncClient(timeout=SHOPIFY_TIMEOUT) as client:
+            response = await _send_with_retry(
+                lambda: client.get(url, headers=headers), "GET", url, idempotent=True
+            )
             response.raise_for_status()
             data = response.json()
         handles = [s.get("handle") for s in data.get("access_scopes", []) if s.get("handle")]
@@ -152,8 +205,10 @@ class ShopifyOAuth:
             "X-Shopify-Access-Token": access_token
         }
 
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, headers=headers)
+        async with httpx.AsyncClient(timeout=SHOPIFY_TIMEOUT) as client:
+            response = await _send_with_retry(
+                lambda: client.get(url, headers=headers), "GET", url, idempotent=True
+            )
             response.raise_for_status()
             return response.json()
 
@@ -192,8 +247,13 @@ class ShopifyOAuth:
             "X-Shopify-Access-Token": access_token,
             "Content-Type": "application/json",
         }
-        async with httpx.AsyncClient() as client:
-            response = await client.post(url, headers=headers, json={"query": query})
+        async with httpx.AsyncClient(timeout=SHOPIFY_TIMEOUT) as client:
+            # POST on the wire, but the body is a read-only GraphQL query, so
+            # replaying it has no side effect.
+            response = await _send_with_retry(
+                lambda: client.post(url, headers=headers, json={"query": query}),
+                "POST", url, idempotent=True,
+            )
             response.raise_for_status()
             data = response.json()
             return data.get("data", {}).get("shop", {})
@@ -219,8 +279,11 @@ class ShopifyOAuth:
                 "owner_resource": "shop",
             }
         }
-        async with httpx.AsyncClient() as client:
-            response = await client.post(url, headers=headers, json=payload)
+        async with httpx.AsyncClient(timeout=SHOPIFY_TIMEOUT) as client:
+            response = await _send_with_retry(
+                lambda: client.post(url, headers=headers, json=payload),
+                "POST", url, idempotent=False,
+            )
             if response.status_code not in (200, 201):
                 logger.warning(
                     f"[Metafield] Failed to write {key} for {shop_domain}: "
@@ -274,17 +337,23 @@ class ShopifyOAuth:
             "Content-Type": "application/json"
         }
 
-        async with httpx.AsyncClient() as client:
-            if method.upper() == "GET":
-                response = await client.get(url, headers=headers)
-            elif method.upper() == "POST":
-                response = await client.post(url, headers=headers, json=data)
-            elif method.upper() == "PUT":
-                response = await client.put(url, headers=headers, json=data)
-            elif method.upper() == "DELETE":
-                response = await client.delete(url, headers=headers)
+        verb = method.upper()
+
+        async with httpx.AsyncClient(timeout=SHOPIFY_TIMEOUT) as client:
+            if verb == "GET":
+                send = lambda: client.get(url, headers=headers)
+            elif verb == "POST":
+                send = lambda: client.post(url, headers=headers, json=data)
+            elif verb == "PUT":
+                send = lambda: client.put(url, headers=headers, json=data)
+            elif verb == "DELETE":
+                send = lambda: client.delete(url, headers=headers)
             else:
                 raise ValueError(f"Unsupported HTTP method: {method}")
 
+            # PUT and DELETE are idempotent by HTTP semantics; POST is not.
+            response = await _send_with_retry(
+                send, verb, url, idempotent=verb in ("GET", "PUT", "DELETE")
+            )
             response.raise_for_status()
             return response.json()
