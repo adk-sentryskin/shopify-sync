@@ -160,7 +160,7 @@ class ShopifyOAuth:
     async def get_shop_info_graphql(self, shop_domain: str, access_token: str) -> Dict:
         """
         Get shop information via Admin GraphQL API.
-        Returns id, name, myshopifyDomain, and primaryDomain.
+        Returns id, name, myshopifyDomain, primaryDomain, and all domains.
         Preferred over REST for post-OAuth shop identity resolution.
 
         Args:
@@ -168,7 +168,7 @@ class ShopifyOAuth:
             access_token: OAuth access token
 
         Returns:
-            Dict with shop fields: name, myshopifyDomain, primaryDomain
+            Dict with shop fields: name, myshopifyDomain, primaryDomain, domains
         """
         shop_domain = sanitize_shop_domain(shop_domain)
         url = f"https://{shop_domain}/admin/api/{self.api_version}/graphql.json"
@@ -181,6 +181,9 @@ class ShopifyOAuth:
             primaryDomain {
               host
               sslEnabled
+            }
+            domains {
+              host
             }
           }
         }

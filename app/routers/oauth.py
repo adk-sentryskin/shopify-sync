@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request, Query
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import text as sa_text
 from typing import Dict, Optional
 from datetime import datetime, timezone
 from app.database import get_db
@@ -12,6 +13,7 @@ from app.services.product_sync import fetch_all_products_from_shopify
 from app.middleware.auth import get_merchant_from_header
 from app.utils.helpers import sanitize_shop_domain
 from app.config import settings
+import json as _json
 import logging
 import re
 import hmac as hmac_lib
@@ -23,6 +25,69 @@ shopify_oauth = ShopifyOAuth()
 
 # Matches *.myshopify.com (with optional path prefix stripped)
 _MYSHOPIFY_RE = re.compile(r"^[a-zA-Z0-9\-]+\.myshopify\.com$")
+
+
+def _persist_merchant_domains(merchant_id: str, primary_url: Optional[str], all_domains: list) -> bool:
+    """
+    Write shop_url + allowed_domains onto public.merchants.
+    Returns True if a row was updated. Safe to call when the row does not
+    exist yet (returns False) — AI persona create may run a few seconds later.
+    """
+    if not merchant_id:
+        return False
+    from app.database import SessionLocal
+    domains_json = _json.dumps(all_domains) if all_domains else None
+    db = SessionLocal()
+    try:
+        result = db.execute(
+            sa_text(
+                "UPDATE public.merchants SET shop_url = :shop_url, "
+                "allowed_domains = CAST(:allowed_domains AS jsonb), updated_at = now() "
+                "WHERE merchant_id = :mid"
+            ),
+            {
+                "shop_url": primary_url,
+                "allowed_domains": domains_json,
+                "mid": merchant_id,
+            },
+        )
+        db.commit()
+        updated = (result.rowcount or 0) > 0
+        if updated:
+            logger.info(
+                f"[OAuth Complete] Updated public.merchants shop_url={primary_url} "
+                f"allowed_domains={all_domains} for {merchant_id}"
+            )
+        return updated
+    except Exception as e:
+        db.rollback()
+        logger.warning(f"[OAuth Complete] Failed to update public.merchants domains: {e}")
+        return False
+    finally:
+        db.close()
+
+
+def _persist_merchant_domains_with_retry(
+    merchant_id: str,
+    primary_url: Optional[str],
+    all_domains: list,
+    attempts: int = 6,
+    delay_seconds: float = 10.0,
+):
+    """
+    Retry domain persistence — merchant row is often created a few seconds
+    after OAuth when the user saves AI Persona.
+    """
+    import time
+    for i in range(attempts):
+        if _persist_merchant_domains(merchant_id, primary_url, all_domains):
+            return
+        if i < attempts - 1:
+            time.sleep(delay_seconds)
+    logger.warning(
+        f"[OAuth Complete] public.merchants row not found for {merchant_id} "
+        f"after {attempts} attempts — domains not persisted from OAuth"
+    )
 
 
 def _create_signed_state(merchant_id: str, secret: str) -> str:
@@ -465,14 +530,23 @@ async def complete_oauth(
         if token_exchanged:
             logger.info(f"[OAuth Complete] Access token obtained for merchant: {merchant.merchant_id}")
 
-        # Get shop info via Admin GraphQL — returns canonical domain, name, primary domain.
+        # Get shop info via Admin GraphQL — returns canonical domain, name, primary + all domains.
         # Preferred over REST; also resolves the real myshopify domain for App Store installs.
+        all_domains: list = []
         try:
             gql_shop = await shopify_oauth.get_shop_info_graphql(shop_domain, merchant.access_token)
             shop_name = gql_shop.get("name", shop_domain)
             canonical_domain = gql_shop.get("myshopifyDomain", shop_domain)
             primary_domain = (gql_shop.get("primaryDomain") or {}).get("host", shop_domain)
-            logger.info(f"[OAuth Complete] Shop info — name: {shop_name}, myshopify: {canonical_domain}, primary: {primary_domain}")
+            all_domains = [d["host"] for d in (gql_shop.get("domains") or []) if d.get("host")]
+            # Always include myshopify + primary even if domains list is sparse
+            for host in (canonical_domain, primary_domain):
+                if host and host not in all_domains:
+                    all_domains.append(host)
+            logger.info(
+                f"[OAuth Complete] Shop info — name: {shop_name}, myshopify: {canonical_domain}, "
+                f"primary: {primary_domain}, domains: {all_domains}"
+            )
 
             # For pure App Store installs (no SaaS account), state=shop_domain was
             # used as a temporary merchant_id. Replace it with the canonical domain.
@@ -485,11 +559,29 @@ async def complete_oauth(
                     merchant.merchant_id = shop_handle
                     db.commit()
                     db.refresh(merchant)
+
+            # Persist custom domain + allowlist onto public.merchants so the
+            # chatbot widget can mount on the storefront (not just *.myshopify.com).
+            # Merchant row may not exist yet (created on AI Persona save) — retry in background.
+            if merchant.merchant_id:
+                primary_url = (
+                    f"https://{primary_domain}"
+                    if primary_domain and not str(primary_domain).startswith("http")
+                    else primary_domain
+                )
+                if not _persist_merchant_domains(merchant.merchant_id, primary_url, all_domains):
+                    background_tasks.add_task(
+                        _persist_merchant_domains_with_retry,
+                        merchant.merchant_id,
+                        primary_url,
+                        list(all_domains),
+                    )
         except Exception as shop_error:
             logger.error(f"[OAuth Complete] GraphQL shop info failed: {str(shop_error)}")
             shop_name = shop_domain
             canonical_domain = shop_domain
             primary_domain = shop_domain
+            all_domains = [shop_domain] if shop_domain else []
 
         # Write merchant_id as shop metafield for the Liquid theme extension
         try:
@@ -533,6 +625,7 @@ async def complete_oauth(
             "shop_name": shop_name,
             "canonical_domain": canonical_domain,
             "primary_domain": primary_domain,
+            "all_domains": all_domains,
             "app_store_install": app_store_install,
             "status": "authenticated",
             "webhooks_registered": webhook_results,
