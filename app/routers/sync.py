@@ -22,6 +22,15 @@ async def reconcile_products_endpoint(
         False,
         description="Mark products as deleted if they don't exist in Shopify"
     ),
+    force_delete: bool = Query(
+        False,
+        description=(
+            "Bypass the bulk-deletion safety bound. Reconciliation normally "
+            "refuses to mark more than 10% of a catalog deleted in one pass, "
+            "since a short Shopify response is indistinguishable from a real "
+            "mass deletion. Only set this when the deletion is known to be real."
+        )
+    ),
     merchant: ShopifyStore = Depends(get_merchant_from_header),
     db: Session = Depends(get_db)
 ):
@@ -40,6 +49,7 @@ async def reconcile_products_endpoint(
 
     Query Parameters:
         - mark_deleted: If True, marks products as deleted if they don't exist in Shopify (default: False)
+        - force_delete: If True, bypasses the 10%-of-catalog bulk-deletion bound (default: False)
 
     Returns:
         Detailed reconciliation report including:
@@ -61,7 +71,8 @@ async def reconcile_products_endpoint(
             merchant=merchant,
             shop_domain=merchant.shop_domain,
             access_token=merchant.access_token,
-            mark_deleted=mark_deleted
+            mark_deleted=mark_deleted,
+            force_delete=force_delete
         )
 
         return {
@@ -154,24 +165,24 @@ async def get_sync_status(
 
     # Count active products
     active_count = db.query(func.count(Product.id)).filter(
-        Product.merchant_id == merchant.id,
+        Product.merchant_id == merchant.merchant_id,
         Product.is_deleted == 0
     ).scalar()
 
     # Count deleted products
     deleted_count = db.query(func.count(Product.id)).filter(
-        Product.merchant_id == merchant.id,
+        Product.merchant_id == merchant.merchant_id,
         Product.is_deleted == 1
     ).scalar()
 
     # Get oldest and newest sync times
     oldest_sync = db.query(func.min(Product.synced_at)).filter(
-        Product.merchant_id == merchant.id,
+        Product.merchant_id == merchant.merchant_id,
         Product.is_deleted == 0
     ).scalar()
 
     newest_sync = db.query(func.max(Product.synced_at)).filter(
-        Product.merchant_id == merchant.id,
+        Product.merchant_id == merchant.merchant_id,
         Product.is_deleted == 0
     ).scalar()
 
@@ -181,7 +192,7 @@ async def get_sync_status(
         Product.status,
         func.count(Product.id)
     ).filter(
-        Product.merchant_id == merchant.id,
+        Product.merchant_id == merchant.merchant_id,
         Product.is_deleted == 0
     ).group_by(Product.status).all()
 
@@ -218,7 +229,8 @@ async def sync_info():
                 "path": "/api/sync/reconcile",
                 "description": "Reconcile products between Shopify and database",
                 "parameters": {
-                    "mark_deleted": "If True, marks products as deleted if they don't exist in Shopify (default: False)"
+                    "mark_deleted": "If True, marks products as deleted if they don't exist in Shopify (default: False)",
+                    "force_delete": "If True, bypasses the 10%-of-catalog bulk-deletion safety bound (default: False)"
                 },
                 "use_cases": [
                     "Detect products missing from database",

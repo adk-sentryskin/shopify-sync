@@ -1,15 +1,25 @@
 from sqlalchemy.orm import Session
-from typing import Dict, List, Optional
+from typing import Dict, List
 from datetime import datetime, timezone
 import httpx
+import asyncio
 import time
 import logging
 from app.models import Product, ShopifyStore
 from app.config import settings
-from app.services.product_sync import parse_shopify_product, upsert_product
+from app.services.product_sync import sync_products
 from app.utils.helpers import sanitize_shop_domain
 
 logger = logging.getLogger(__name__)
+
+# Soft-deleting is the one reconciliation step that destroys data, and it acts
+# on absence — everything Shopify *didn't* return. A fetch that came back short
+# (a scoped token, an empty 200, pagination that stopped early) therefore looks
+# exactly like "the merchant deleted their catalog". These bounds make that
+# failure mode a refusal instead of a wipe; pass force_delete=True to override
+# for a genuinely large, intentional deletion.
+MAX_DELETE_RATIO = 0.10   # never auto-delete more than 10% of a catalog at once
+MAX_DELETE_FLOOR = 10     # ...but always allow a handful, for small catalogs
 
 
 async def reconcile_products(
@@ -17,7 +27,8 @@ async def reconcile_products(
     merchant: ShopifyStore,
     shop_domain: str,
     access_token: str,
-    mark_deleted: bool = False
+    mark_deleted: bool = False,
+    force_delete: bool = False
 ) -> Dict:
     """
     Reconcile products between Shopify and local database
@@ -35,6 +46,8 @@ async def reconcile_products(
         shop_domain: Shopify shop domain
         access_token: OAuth access token
         mark_deleted: If True, marks products as deleted if they don't exist in Shopify
+        force_delete: Bypass the bulk-deletion safety bound. Only set this when
+            a large deletion is known to be real.
 
     Returns:
         Dictionary with reconciliation results:
@@ -108,25 +121,61 @@ async def reconcile_products(
         results['missing_in_db'] = len(missing_in_db)
         results['missing_in_db_product_ids'] = list(missing_in_db)
 
-        # Sync missing products — fetch FULL data first (the comparison fetch is
-        # skinny; upserting it would wipe status/variants).
-        for product_id in missing_in_db:
-            try:
-                full = await fetch_single_product_full(shop_domain, access_token, product_id)
-                if full is None:
-                    logger.warning(f"Skipping missing product {product_id}: could not fetch full data")
-                    continue
-                upsert_product(db, merchant, full)
-                results['synced_count'] += 1
-            except Exception as e:
-                logger.error(f"Error syncing missing product {product_id}: {str(e)}")
+        # Sync missing products in batched pages rather than one commit each
+        if missing_in_db:
+            # Off the event loop — sync_products blocks on Postgres and, with
+            # embeddings on, a synchronous Vertex call for the whole batch.
+            missing_stats = await asyncio.to_thread(
+                sync_products, db, merchant,
+                [shopify_product_map[pid] for pid in missing_in_db]
+            )
+            results['synced_count'] += missing_stats['synced_count']
+            if missing_stats['failed_count']:
+                logger.error(
+                    f"Reconciliation failed to sync {missing_stats['failed_count']} "
+                    f"missing products for merchant {merchant.merchant_id}"
+                )
 
         # Step 4: Find products deleted in Shopify
         deleted_in_shopify = db_product_ids - shopify_product_ids
         results['deleted_in_shopify'] = len(deleted_in_shopify)
         results['deleted_in_shopify_product_ids'] = list(deleted_in_shopify)
 
-        # Mark as deleted if requested
+        # Mark as deleted if requested — bounded, see MAX_DELETE_RATIO above
+        if mark_deleted and deleted_in_shopify:
+            delete_limit = max(
+                MAX_DELETE_FLOOR,
+                int(results['products_in_database'] * MAX_DELETE_RATIO)
+            )
+            refusal = None
+            if results['products_in_shopify'] == 0 and results['products_in_database'] > 0:
+                refusal = (
+                    "Shopify returned 0 products while the database holds "
+                    f"{results['products_in_database']} — treating this as a failed "
+                    "fetch, not an emptied catalog"
+                )
+            elif len(deleted_in_shopify) > delete_limit:
+                refusal = (
+                    f"{len(deleted_in_shopify)} products would be marked deleted, "
+                    f"over the safety bound of {delete_limit} "
+                    f"({int(MAX_DELETE_RATIO * 100)}% of {results['products_in_database']})"
+                )
+
+            if refusal and not force_delete:
+                results['mark_deleted_skipped'] = True
+                results['mark_deleted_skipped_reason'] = refusal
+                logger.error(
+                    f"Refusing bulk product deletion for merchant "
+                    f"{merchant.merchant_id}: {refusal}. Re-run with force_delete=true "
+                    f"if this deletion is real."
+                )
+                deleted_in_shopify = set()
+            elif refusal:
+                logger.warning(
+                    f"force_delete=True — proceeding with bulk deletion for merchant "
+                    f"{merchant.merchant_id} despite: {refusal}"
+                )
+
         if mark_deleted and deleted_in_shopify:
             for product_id in deleted_in_shopify:
                 try:
@@ -136,7 +185,7 @@ async def reconcile_products(
                     product.deleted_at = datetime.now(timezone.utc)
                     results['marked_deleted_count'] += 1
                 except Exception as e:
-                    print(f"Error marking product {product_id} as deleted: {str(e)}")
+                    logger.error(f"Error marking product {product_id} as deleted: {str(e)}")
 
             db.commit()
 
@@ -163,20 +212,21 @@ async def reconcile_products(
                         if time_diff > 1:  # More than 1 second difference
                             out_of_sync.append(product_id)
 
-                            # Re-sync the product with FULL data (the comparison
-                            # fetch is skinny; upserting it would wipe status/variants).
-                            try:
-                                full = await fetch_single_product_full(shop_domain, access_token, product_id)
-                                if full is None:
-                                    logger.warning(f"Skipping out-of-sync product {product_id}: could not fetch full data")
-                                else:
-                                    upsert_product(db, merchant, full)
-                                    results['synced_count'] += 1
-                            except Exception as e:
-                                logger.error(f"Error re-syncing product {product_id}: {str(e)}")
-
                 except (ValueError, AttributeError) as e:
-                    print(f"Error parsing timestamp for product {product_id}: {str(e)}")
+                    logger.error(f"Error parsing timestamp for product {product_id}: {str(e)}")
+
+        # Re-sync every drifted product in one batched pass
+        if out_of_sync:
+            resync_stats = await asyncio.to_thread(
+                sync_products, db, merchant,
+                [shopify_product_map[pid] for pid in out_of_sync]
+            )
+            results['synced_count'] += resync_stats['synced_count']
+            if resync_stats['failed_count']:
+                logger.error(
+                    f"Reconciliation failed to re-sync {resync_stats['failed_count']} "
+                    f"drifted products for merchant {merchant.merchant_id}"
+                )
 
         results['out_of_sync'] = len(out_of_sync)
         results['out_of_sync_product_ids'] = out_of_sync
@@ -202,35 +252,8 @@ async def reconcile_products(
         results['status'] = 'failed'
         results['error'] = str(e)
         results['duration_seconds'] = round(time.time() - start_time, 2)
-        print(f"Error in product reconciliation: {str(e)}")
+        logger.error(f"Error in product reconciliation: {str(e)}")
         return results
-
-
-async def fetch_single_product_full(
-    shop_domain: str,
-    access_token: str,
-    product_id,
-) -> Optional[Dict]:
-    """Fetch the COMPLETE product (status, variants, all fields) for one product.
-
-    Reconciliation compares with a skinny fetch (id/title/updated_at) for speed,
-    but a product that needs syncing must be upserted with its FULL data —
-    upserting the skinny dict would wipe status to NULL and destroy variants.
-    """
-    shop_domain = sanitize_shop_domain(shop_domain)
-    url = f"https://{shop_domain}/admin/api/{settings.SHOPIFY_API_VERSION}/products/{product_id}.json"
-    headers = {
-        'X-Shopify-Access-Token': access_token,
-        'Content-Type': 'application/json',
-    }
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(url, headers=headers)
-            response.raise_for_status()
-            return response.json().get('product')
-    except Exception as e:
-        logger.error(f"Failed to fetch full product {product_id}: {str(e)}")
-        return None
 
 
 async def fetch_all_products_from_shopify_for_reconciliation(
@@ -240,8 +263,11 @@ async def fetch_all_products_from_shopify_for_reconciliation(
     """
     Fetch ALL products from Shopify for reconciliation
 
-    Similar to fetch_all_products_from_shopify but only fetches basic fields
-    for faster comparison. Returns list of product dictionaries.
+    Returns full product payloads, not just the comparison fields. Anything
+    reconciliation finds missing or drifted gets written straight back through
+    sync_products(), so a trimmed `fields=` payload would null out vendor,
+    product_type, handle, status, published_at and raw_data on every row it
+    touched. Same number of API calls either way.
 
     Args:
         shop_domain: Shopify shop domain
@@ -260,8 +286,7 @@ async def fetch_all_products_from_shopify_for_reconciliation(
                 url = f"https://{shop_domain}/admin/api/{settings.SHOPIFY_API_VERSION}/products.json"
                 params = {
                     'limit': limit,
-                    'since_id': since_id,
-                    'fields': 'id,title,updated_at'  # Only fetch fields we need for comparison
+                    'since_id': since_id
                 }
 
                 headers = {
@@ -284,12 +309,12 @@ async def fetch_all_products_from_shopify_for_reconciliation(
                     break
 
                 since_id = products[-1]['id']
-                time.sleep(0.5)  # Rate limiting
+                await asyncio.sleep(0.5)  # Rate limiting
 
         return all_products
 
     except Exception as e:
-        print(f"Error fetching products from Shopify: {str(e)}")
+        logger.error(f"Error fetching products from Shopify: {str(e)}")
         return None
 
 

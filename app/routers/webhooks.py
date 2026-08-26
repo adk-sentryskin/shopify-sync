@@ -208,7 +208,7 @@ async def product_delete_webhook(
         # Find and soft delete the product
         product = db.query(Product).filter(
             Product.shopify_product_id == shopify_product_id,
-            Product.merchant_id == merchant.id
+            Product.merchant_id == merchant.merchant_id
         ).first()
 
         if product:
@@ -516,7 +516,7 @@ async def compliance_webhook_router(
 
                 # Soft delete products associated with this merchant
                 products_deleted = db.query(Product).filter(
-                    Product.merchant_id == merchant.id
+                    Product.merchant_id == merchant.merchant_id
                 ).update({
                     "is_deleted": 1,
                     "status": "redacted",
@@ -733,7 +733,7 @@ async def shop_redact_webhook(
 
             # Soft delete products associated with this merchant
             products_deleted = db.query(Product).filter(
-                Product.merchant_id == merchant.id
+                Product.merchant_id == merchant.merchant_id
             ).update({
                 "is_deleted": 1,
                 "status": "redacted",

@@ -1,8 +1,75 @@
 # Sales Attribution — Handoff & Resume Doc
 
-**Last updated:** 2026-06-10
+**Last updated:** 2026-08-24
 **Owner:** namit
-**Status:** In flight — backend persistence shipped; **dashboard sales-attribution UI shipped to production 2026-06-10 (Track 2)**; awaiting Shopify PCD review; BigQuery export (Track 3) still to build. One frontend polish item tabled — see "Deferred to next build".
+**Status:** **PCD approved. Pipeline live. Zero attributed orders in 60 days.**
+
+The plumbing is finished and working end to end — merchants have granted `read_orders`, the `orders/*` webhooks are registered and delivering, and 149 real orders came through in the last 60 days. **None of them carried agent attribution**, so `shopify_sync.orders` is empty. That is not a bug in this pipeline; it means nobody has completed a purchase through the widget's add-to-cart. See "2026-08-24 investigation" below — including the one number that distinguishes the three possible causes, which lives in GA4 and not in this repo.
+
+
+---
+
+## ▶️ Start here tomorrow (2026-08-25)
+
+Cold-start checklist. Ordered so the cheapest thing that changes the decision comes first.
+
+**⚠️ First: there is uncommitted work in the tree.** Nothing is committed or deployed.
+`git status` should show 6 modified files + `scripts/verify_product_sync.py` untracked.
+If it doesn't, something ate it — see "Uncommitted work in the tree" for what should be
+there. Sanity check before touching anything:
+
+```bash
+cd ~/Documents/work/chekout-ai/shopify-sync
+git status --short                                    # expect 6 M + 1 ??
+PYTHONPATH=. python scripts/verify_product_sync.py     # expect: all 49 checks passed
+```
+
+**1. Get the GA4 number (~5 min, do this first).**
+Query `add_to_cart_clicked` over the last 60 days, broken out by `merchantId` — focus on
+`rosendahl-design-group` and `pacsoulfoods` (86 and 60 orders respectively in that window,
+zero attributed). Also grab widget session counts. The three-way table in the 2026-08-24
+section says what each outcome means. **Everything below is worth less until this is known** —
+it decides whether the next sprint is widget UX, checkout funnel, or attribution plumbing.
+
+**2. Redeploy with CPU throttling off (one flag).**
+Un-starves every FastAPI background task — OAuth product sync, custom-app sync, order
+provisioning, order backfill. This is why the backfill silently timed out.
+
+```bash
+gcloud run services update shopify-sync \
+  --region=us-central1 --project=production-aibuilder --no-cpu-throttling
+```
+
+Confirm: `gcloud run services describe shopify-sync --region=us-central1 \
+  --format="value(spec.template.metadata.annotations)"` should now include
+`run.googleapis.com/cpu-throttling: 'false'`.
+
+**3. Land the uncommitted work as three commits** (details in "Uncommitted work in the tree"):
+
+| # | Scope | Urgency |
+|---|---|---|
+| 1 | Product sync: page-batched writes + failsafes | 48–63× speedup, has been slow but not broken |
+| 2 | Tenant-filter fixes (9 sites) | **Urgent** — `products/delete` and GDPR `shop/redact` have 500'd since January |
+| 3 | Orders: `updated_at` in the field allowlist | Small |
+
+Commit 2 is the one that shouldn't wait. Consider putting it on its own branch off `main`
+so it can ship independently of the orders/sync stack (which still isn't merged — see
+"branch state"). No `Co-Authored-By` trailer.
+
+Then `echo yes | ./deploy.sh production`.
+
+**4. After 2 + 3 are deployed, re-run the 60-day backfill** for `rosendahl-design-group`
+and `nuthatch-naturals` — it has never once succeeded for either.
+
+### Deliberately NOT done yet
+
+- Session-id unification (the broken JOIN key) — blocks Track 3, but pointless until step 1
+  says there's a funnel worth joining.
+- Surfacing sync health to the frontend. Decided approach: `last_sync_at` /
+  `last_sync_status` / `last_sync_stats` (JSONB) columns on `shopify_stores`, written by the
+  background task, returned by `GET /api/sync/status`. One migration. Not started.
+- `backfill_attributed_orders` pagination (`since_id`).
+- Success-path logging in `_handle_order_event`.
 
 ---
 
@@ -18,10 +85,10 @@ The build is **phased** to keep existing merchants unbroken and to gate the most
 | 2 | Declare `read_orders` in `optional_scopes` to validate Shopify accepts it | ✅ **shipped** |
 | 3 | Backend Postgres persistence for attributed orders | ✅ **shipped** (migration applied, code deployed) |
 | 3.5 | Cart-attribute stamping in `chatbot.js` | ✅ **shipped** (commit `d22f151`) |
-| — | Shopify PCD Level 1 review | ⏳ **awaiting Shopify** (submitted 2026-05-28) |
+| — | Shopify PCD Level 1 review | ✅ **approved** — merchants can and do grant `read_orders` |
 | 4 | Dashboard "Sales attribution" CTA + revenue widgets + Sankey extension | ✅ **shipped 2026-06-10** — CTA, Total Revenue + AOV tiles, product breakdown, funnel "Purchased" stage |
 | 5 | BigQuery export pipeline (Postgres → BQ → Databricks) | 🔲 blocked on BQ table creation |
-| 6 | Flip `read_orders` from optional → required + scope-drift auto-redirect | 🔲 not started (post-PCD-approval) |
+| 6 | Flip `read_orders` from optional → required + scope-drift auto-redirect | 🔲 not started — **now unblocked** (PCD approved) |
 
 ---
 
@@ -42,9 +109,9 @@ The fix: when the agent adds to cart, also stamp the cart with `_chekout_ai_sess
 - **Service URL:** https://shopify-sync-579388332064.us-central1.run.app
 - **Project:** `production-aibuilder` / **Region:** `us-central1`
 - **Live scopes (required):** `read_inventory,read_product_listings,read_products,read_price_rules,read_discounts,read_gift_cards,read_legal_policies,read_shipping,read_content` — 9 benign read scopes, no PCD review needed.
-- **Live scopes (optional, declared):** `read_orders` — declared in Partner Dashboard but **no merchant has granted it yet** (and can't, until PCD clears).
+- **Live scopes (optional, granted):** `read_orders` — PCD approved; granted in production by at least `rosendahl-design-group` and `nuthatch-naturals` (via the managed-install optional-scopes flow, self-healed through `/api/orders/scope-status`).
 - **Cloud SQL instance:** `production-aibuilder:us-central1:chekout-db-prod`, database `chekoutai`, user `user_prod`.
-- **New endpoints (live, dormant until a merchant grants):**
+- **Order endpoints (live and serving):**
   - `GET /api/orders/scope-status` → reports whether a merchant has `read_orders`
   - `GET /api/orders/attributed` → list of attributed orders from Postgres
   - `GET /api/orders/attribution-summary` → aggregate stats for dashboard widgets
@@ -55,16 +122,164 @@ The fix: when the agent adds to cart, also stamp the cart with `_chekout_ai_sess
 
 ### Frontend state (`chekoutai-frontend`)
 
-- `public/chatbot.js` already stamps cart attributes on every Shopify add-to-cart (commit `d22f151`). Fire-and-forget; can't break add-to-cart.
+- `public/chatbot.js` already stamps cart attributes on every Shopify add-to-cart (commit `d22f151`). Fire-and-forget; can't break add-to-cart. **Verified deployed** — `tagShopifyCartAttribution` and `_chekout_ai_session` are both present in the live bundles at `ai-builder.chekout.ai/chatbot.js` and `app.chekout.ai/chatbot.js`.
 - **Dashboard sales-attribution UI shipped 2026-06-10** (Track 2 — see that section for what landed). One follow-up tabled: "Deferred to next build".
 
-### PCD review
+### PCD review — ✅ APPROVED
+
+Approved since this doc was last written. The optional-scope grant flow works in
+production: `[Scope Reconcile]` + `[Provision Orders]` fired for real merchants,
+`orders/*` webhooks registered, and order webhooks are being delivered and
+processed. Track 6 (flip to required) is unblocked.
+
+Original submission details, kept for the record:
 
 - **Submitted:** 2026-05-28
 - **Level:** 1 (no customer PII)
 - **Retention attestation:** 60 days
 - **Expected response window:** several business days to ~2 weeks; may include clarifying questions.
 - **What to check:** Partner Dashboard → ChekOut AI → API access → Protected customer data → status flips from *Pending review* to *Approved*. Email notification on decision.
+
+---
+
+## 2026-08-24 investigation — the pipeline works, the funnel doesn't
+
+Started as "is the attributed-orders pipeline working?" It is. The finding is
+what that reveals about the product, plus four bugs found along the way.
+
+### What was confirmed working
+
+Traced end to end against production logs and a real Postgres:
+
+- **The grant flow works.** `[Scope Reconcile] rosendahl-design-group scope updated -> ...,read_orders`
+  then `[Provision Orders] Starting`. The managed-install optional-scopes grant never
+  calls `/api/oauth/complete`, and the self-healing pull in `/api/orders/scope-status`
+  correctly caught it.
+- **`orders/*` webhooks are registered and delivering.** Both `orders/create` and
+  `orders/updated` arrive and are processed.
+- **The ingest code is correct.** Exercised end to end against Postgres with synthetic
+  orders (37 checks): attribution parsing (both `_chekout_ai_session` and the bare form),
+  all three webhook topics, upsert-in-place with no duplicate rows, the read endpoints
+  and their revenue math (paid-only summation verified), scope-gated 403s, the 60-day
+  prune, and GDPR order deletion. All pass.
+- **The stamping code is live** on both CDN bundles.
+
+### The numbers
+
+```
+orders/create events, 60 days:   rosendahl-design-group   86
+                                 pacsoulfoods             60
+                                 blackcat-mfg              2
+                                 nuthatch-naturals         1
+                                 ---------------------------
+                                 total                   149
+
+attributed orders persisted:       0
+nightly prune:                     "Deleted 0 orders" every night
+```
+
+**149 real orders. Zero carried a `_chekout_ai_*` attribute.**
+
+### Why that means what it means
+
+For Shopify, the widget's add-to-cart is the **only** path from agent to purchase.
+The product card click opens an in-widget detail panel (`e.stopPropagation()` in
+`InlineProductCarousel.tsx`), and `QuantitySelector` uses `product_url` only to derive
+the shop origin, never to navigate. (There *is* a `window.location.href = productUrl`
+in `chatbot.js`, but it's inside a Squarespace-only branch for products needing variant
+options — it does not apply here.)
+
+Cart attributes persist on the cart until checkout, so anyone who ever clicked widget
+add-to-cart and later completed checkout **would** have attributed, whatever else they
+did in between. Zero across 149 orders is therefore a real zero, not a sampling artifact.
+
+### ⚠️ The one number that isn't in this repo
+
+The widget fires GA4 telemetry on every add-to-cart
+(`InlineProductCarousel.tsx:75` → `lib/analytics.ts::trackAddToCartClicked`):
+
+```ts
+trackEvent('add_to_cart_clicked', merchantId, { session_id, product_name, product_id, quantity, variant_id })
+```
+
+**Query `add_to_cart_clicked` in GA4 for the last 60 days.** It splits the problem three ways:
+
+| `add_to_cart_clicked` | Attributed orders | What it means | Where to work |
+|---|---|---|---|
+| ≈ 0 | 0 | Nobody presses the button. The agent isn't driving intent to purchase. | Widget UX / agent prompting — **not** attribution |
+| \> 0 | 0 | People add via widget then abandon before checkout. | Checkout funnel; size the drop-off |
+| \> 0 | 0, but stamping suspected | `/cart/update.js` failing silently (it's fire-and-forget with only a `console.warn`) | Instrument `tagShopifyCartAttribution` |
+
+Until that number is known, "nobody is converting" and "nobody is even trying" are
+indistinguishable, and they have completely different fixes.
+
+### 🐞 Bug: the session id can't join to anything
+
+`models.py` calls `chekout_ai_session` *"the JOIN key with chatbot conversation data"* and
+Track 3's Sankey (`add_to_cart → purchase`) is built on it. **It cannot join.** The two
+sides mint different ids:
+
+| | widget (`lib/getSessionId.ts`) | storefront (`public/chatbot.js`) |
+|---|---|---|
+| storage key | `{merchantId}_chat_session_id` | `checkout_ai_session_id` |
+| generator | `nanoid()` | `'cai_' + Date.now().toString(36) + '_' + rand` |
+| example | `V1StGXR8_Z5jdHi6B-myT` | `cai_m1x2y3_a1b2c3d4` |
+| lands in | GA4 `add_to_cart_clicked.session_id` | `orders.chekout_ai_session` |
+
+They also can't be reconciled after the fact: the widget runs in an iframe on
+`app.chekout.ai`, `chatbot.js` runs on the merchant's storefront, and `sessionStorage`
+is per-origin — neither can read the other's value even if the key names matched.
+
+**Fix:** one side mints the id and hands it to the other. `chatbot.js` already
+`postMessage`s to the iframe, so pass the id across at handshake and have both the GA4
+event and the cart attribute use it. **Do this before Track 3** — the BigQuery Sankey
+JOIN is dead on arrival otherwise.
+
+### 🐞 Bug: Cloud Run is CPU-throttling every background task
+
+The service has `startup-cpu-boost: 'true'` but **no `run.googleapis.com/cpu-throttling: 'false'`**,
+so it takes the default: CPU is allocated only during request processing. FastAPI
+`BackgroundTasks` run *after* the response is sent, so they are starved.
+
+Evidence — `[Provision Orders] Starting` → `Failed` took **9m29s** (rosendahl) and
+**12m17s** (nuthatch) for work that takes seconds locally.
+
+This affects **every** background task in the service:
+`initial_product_sync_background` (the OAuth product sync), `_background_product_sync`
+(custom app), `provision_order_access_background`, `_oauth_order_backfill_background`.
+Very likely why product syncs appeared to run without landing.
+
+**Fix:** redeploy with `--no-cpu-throttling`. Deploy-flag change, no code.
+
+### 🐞 Bug: the 60-day backfill has never succeeded
+
+For both merchants that granted:
+
+```
+ERROR [Order Backfill] Failed for rosendahl-design-group:
+      {'status': 'error', 'scanned': 0, 'persisted': 0, 'error': ''}
+```
+
+The empty `error` is diagnostic: `str(httpx.ReadTimeout())` is `''` (same for
+`ConnectTimeout`, `ReadError`). It timed out — at the time (2026-07-28/29)
+`make_shopify_request` was still a bare `httpx.AsyncClient()` on httpx's 5s default.
+The 30s timeout + bounded retry (`e2f85f3`) only landed 2026-08-06 and prod picked it
+up in revision `shopify-sync-00024-7z4` on 2026-08-12.
+
+So the pre-grant 60-day window was never captured for either merchant. Moot today
+(nothing was attributed anyway), but **re-run the backfill after fixing CPU throttling**.
+
+Related: `backfill_attributed_orders` walks a single page of 250 with no `since_id`
+pagination. The docstring justifies this as "far fewer than 250 attributed orders" —
+but the cap is on **orders scanned**, not attributed. A store with 1,000 orders in the
+window gets 250 scanned and misses the rest. There's also no explicit `order=` param,
+so which 250 depends on Shopify's default sort.
+
+### 🐞 Bug: you can't tell "working with zero" from "not running"
+
+`_handle_order_event` logs only on the *not-attributed* branch — the success path logs
+nothing. That's precisely why this took a full day to diagnose. Add a log line and a
+counter on successful attribution.
 
 ---
 
@@ -82,6 +297,65 @@ main (859a164)  ──  pre-step-1 production state
 ```
 
 **Recommended cleanup before doing anything else on main:** fast-forward merge `feat/orders-postgres-persistence` → `main` (or open one PR per step if you want reviewable history) and push. Then `main` reflects what's actually in production.
+
+---
+
+## Uncommitted work in the tree (2026-08-24)
+
+Sitting on `feat/orders-postgres-persistence`, **not committed, not deployed**. Suggested
+as three commits.
+
+**1. Product sync: page-batched writes + failsafes** — `product_sync.py`, `product_reconciliation.py`, `sync.py`
+
+`sync_products()` looked each product up twice (once in the loop, once inside
+`upsert_product`) and committed + refreshed per product — ~5 DB round trips each, ~1,250
+for a 250-product page. Now: one embedding batch, one SELECT to classify created-vs-updated,
+one `INSERT ... ON CONFLICT` for the page, one commit. Measured **48–63× faster**
+(372ms → 7.7ms per product; a 250-page now takes ~0.5s).
+
+Failsafes added, because the danger isn't a failed write (atomic, rolls back) but a
+*successful* write of garbage:
+- Columns are written only when their source key is present in the payload, so a
+  `?fields=id,title` response can't blank `vendor`/`handle`/`status`/`raw_data`.
+  Present-but-null still writes, so unpublishing works.
+- A partial payload may update an existing product but never create one.
+- `embedding = COALESCE(excluded.embedding, products.embedding)` — a failed Vertex batch
+  can't null out stored vectors.
+- Reconciliation refuses to soft-delete >10% of a catalog in one pass (floor 10), and
+  flatly refuses when Shopify returns 0 products against a non-empty DB. `force_delete=true`
+  overrides.
+- A run that stops making progress aborts instead of burning through every page.
+
+Also fixed: reconciliation was fetching `fields=id,title,updated_at` and **upserting those
+skinny payloads over fully-synced rows**, nulling vendor/handle/status/`raw_data` on every
+product it touched. It now fetches full payloads (same API call count).
+
+Verify with `PYTHONPATH=. python scripts/verify_product_sync.py` — 49 checks against a
+real Postgres, cleans up after itself. Point it at dev, not prod.
+
+**2. Tenant-filter fixes (9 sites)** — `sync.py` ×5, `webhooks.py` ×3, `variants.py` ×1
+
+Fallout from migration 003 (2026-01-13, `b6ed746`), which renamed the integer
+`products.merchant_id` → `store_id` and added a VARCHAR `merchant_id`. The services were
+updated; **the routers weren't.** Every one of these raised
+`operator does not exist: character varying = integer` — a hard 500, for ~7 months:
+
+| Site | Broken behaviour |
+|---|---|
+| `sync.py` ×5 | `GET /api/sync/status` 500s |
+| `variants.py` | `GET /api/variants/{id}` 500s — no variant/SKU/inventory lookups |
+| `webhooks.py:211` | **`products/delete` never soft-deleted anything** — the agent keeps recommending removed products |
+| `webhooks.py:519,736` | **GDPR `shop/redact` 500s** — products never redacted |
+
+⚠️ The `shop/redact` fix also unblocks orders. `delete_orders_for_merchant()` sits one line
+*below* the failing product query in the same `try`, so it has never executed. The PCD
+attestation "we erase order data on uninstall" starts being true only with this fix.
+
+**3. Orders: `updated_at` in the field allowlist** — `order_attribution.py`
+
+`_ORDER_FIELDS` never requested `updated_at`, but `parse_order_for_db` reads it — so every
+order from the backfill or live-read path landed with `shopify_updated_at = NULL`. Webhook
+orders were unaffected (full body). Allowlist re-checked: still no PCD field.
 
 ---
 
@@ -137,6 +411,12 @@ Frontend commits on `chekoutai-frontend@main`: `99f80a8`, `9ba7af0`, `731ee2b`, 
 **Effort:** ~1–2 days. Can fully ship UI before PCD approves (widgets show zeros until merchants grant).
 
 ### Track 3 — BigQuery export pipeline (Postgres → BQ → Databricks)
+
+> ⚠️ **Second blocker, added 2026-08-24:** the `chekout_ai_session` JOIN key this track's
+> Sankey depends on **does not join** — the widget and `chatbot.js` mint different session
+> ids in different origins. Fix that first (see "Bug: the session id can't join to
+> anything"), or the BQ table will land with a key that correlates to nothing. Also note
+> there is currently **nothing to export** — `shopify_sync.orders` is empty.
 
 **Blocking dep:** data engineer must create the BigQuery table. Schema to request (paste this into the ticket):
 
@@ -329,19 +609,43 @@ Intentionally tabled — not blockers, scoped for the next frontend build.
 1. **`app/middleware/auth.py:31` docstring/error says `X-ShopifyStore-Id`, actual header is `X-Merchant-Id`.** Pre-existing. Fix is either (a) update the error message + docstring, or (b) add `Header(..., alias="X-ShopifyStore-Id")` to the param. Not blocking anything.
 2. **`.github/workflows/deploy.yml` is dead.** Either fix it or delete it. While dead it's also a footgun — the `SHOPIFY_SCOPES=${{ vars.SHOPIFY_SCOPES }}` line would clobber Cloud Run's env var with the empty string if anyone ever runs it. Surgical fix: remove the `SHOPIFY_SCOPES=` injection from lines 159 + 208.
 3. **Step branches not merged to main.** See the "Branch state" warning above. Merge them or delete them to avoid a future regression on a fresh `main` deploy.
-4. **Custom-app merchants' `merchant.scope` is stale until they reconnect.** Old custom-app merchants have the old hardcoded scope string. The new code now reads real granted scopes via `/admin/oauth/access_scopes.json`, but only on new connects. Optional: write a one-off backfill that calls `get_access_scopes` for each existing custom-app merchant and updates their `scope` column. Not blocking.
+4. **`backfill_attributed_orders` walks one page of 250 with no pagination.** The cap is on
+   orders *scanned*, not attributed, and there's no explicit `order=` param — so on a busy
+   store you get an arbitrary 250 and miss the rest. Add `since_id` pagination.
+5. **`_handle_order_event` doesn't log the success path**, so "working with zero attributions"
+   is indistinguishable from "not running" in Cloud Run logs. Add a log line + counter.
+6. **Custom-app merchants' `merchant.scope` is stale until they reconnect.** Old custom-app merchants have the old hardcoded scope string. The new code now reads real granted scopes via `/admin/oauth/access_scopes.json`, but only on new connects. Optional: write a one-off backfill that calls `get_access_scopes` for each existing custom-app merchant and updates their `scope` column. Not blocking.
 
 ---
 
 ## How to resume
 
-When you (or a fresh Claude session) come back:
+The attribution *plumbing* is done. The open question is no longer "does it work" but
+"is anyone converting" — and the next three steps are ordered by what unblocks the most.
 
-1. **Read this doc top-to-bottom.**
-2. **Check PCD review status** in Partner Dashboard → ChekOut AI → API access → Protected customer data. If approved, the path forward changes (Track 6 unblocks).
-3. **Pick the next track:**
-   - Default: Track 2 (Dashboard CTA) — most user-visible, doesn't require any external dependency.
-   - If you've pinged the data engineer and the BQ table exists, you can start Track 3 in parallel.
-4. **Before any new code change:** decide whether to first **merge step branches → main**. If yes, do that as a separate housekeeping commit so the audit trail is clean.
+1. **Get the GA4 `add_to_cart_clicked` count for the last 60 days.** See the table in
+   the 2026-08-24 section. Until you have it you cannot tell a conversion problem from a
+   product problem, and you'd be guessing about what to build next. Nothing else on this
+   list matters as much.
 
-If picking up with Claude, paste this doc into the new session and say "we're resuming sales attribution from this handoff doc, pick up at <track X>." That's enough context for a clean restart.
+2. **Redeploy with `--no-cpu-throttling`.** One flag. Un-starves every background task in
+   the service — OAuth product sync, custom-app sync, order provisioning, order backfill.
+   Then re-run the backfill for `rosendahl-design-group` and `nuthatch-naturals`.
+
+3. **Land the uncommitted work** (see "Uncommitted work in the tree"). The nine
+   tenant-filter fixes are the urgent half — `products/delete` and GDPR `shop/redact`
+   have been failing since January.
+
+Then, depending on what step 1 says:
+
+- **If `add_to_cart_clicked` is ≈ 0** — this is not an attribution problem. The agent
+  isn't converting browse into cart-adds. Work the widget UX; the measurement stack is
+  already ahead of the product.
+- **If it's meaningfully > 0** — unify the session id (see the JOIN-key bug) so orders can
+  be traced back to conversations, then Track 3 (BigQuery) becomes worth building.
+
+Track 6 (flip `read_orders` to required) is unblocked by PCD approval but is low value
+until there's something to attribute.
+
+If picking up with Claude, paste this doc into the new session and say "we're resuming
+sales attribution from this handoff doc, pick up at step N."

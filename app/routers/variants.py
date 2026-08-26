@@ -41,7 +41,7 @@ async def get_product_variants(
     """
     product = db.query(Product).filter(
         Product.shopify_product_id == product_id,
-        Product.merchant_id == merchant.id,
+        Product.merchant_id == merchant.merchant_id,
         Product.is_deleted == 0  # Only show active products
     ).first()
 
