@@ -40,6 +40,7 @@ _ORDER_FIELDS = ",".join([
     "id",
     "name",            # human-readable order number, e.g. "#1001"
     "created_at",
+    "updated_at",      # mutation time; parse_order_for_db writes shopify_updated_at
     "note_attributes",  # where our agent attribution lives
     "line_items",       # product/variant/qty/price — no customer PII
     "discount_codes",   # agent-issued coupons
